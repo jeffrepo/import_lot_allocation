@@ -1,0 +1,4 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_import_lot_user,import.lot user,model_import_lot,import_lot_allocation.group_rework_user,1,1,1,1
+access_import_lot_line_user,import.lot.line user,model_import_lot_line,import_lot_allocation.group_rework_user,1,1,1,1
+access_import_lot_allocation_user,import.lot.allocation user,model_import_lot_allocation,import_lot_allocation.group_rework_user,1,1,1,1

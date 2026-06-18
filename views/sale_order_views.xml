@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_order_form_import_lot" model="ir.ui.view">
+        <field name="name">sale.order.form.import.lot</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_view_import_lot_allocations" type="object" class="oe_stat_button" icon="fa-tags">
+                    <field name="import_lot_allocation_count" widget="statinfo" string="Import Lot Allocations"/>
+                </button>
+            </xpath>
+            <xpath expr="//field[@name='order_line']/tree/field[@name='qty_delivered']" position="after">
+                <field name="import_lot_allocated_qty" readonly="1" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

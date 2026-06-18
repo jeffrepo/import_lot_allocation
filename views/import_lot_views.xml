@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_import_lot_tree" model="ir.ui.view">
+        <field name="name">import.lot.tree</field>
+        <field name="model">import.lot</field>
+        <field name="arch" type="xml">
+            <tree string="Import Lots" decoration-danger="state == 'exception'" decoration-muted="state in ('cancelled', 'closed')">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <field name="partner_id"/>
+                <field name="expected_date"/>
+                <field name="expected_qty"/>
+                <field name="allocated_qty"/>
+                <field name="received_qty"/>
+                <field name="available_to_promise_qty"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_import_lot_form" model="ir.ui.view">
+        <field name="name">import.lot.form</field>
+        <field name="model">import.lot</field>
+        <field name="arch" type="xml">
+            <form string="Import Lot">
+                <header>
+                    <button name="action_confirm" type="object" string="Confirm" states="draft" class="btn-primary"/>
+                    <button name="action_set_in_transit" type="object" string="Set In Transit" states="confirmed" class="btn-secondary"/>
+                    <button name="action_close" type="object" string="Close" states="received,partially_received" class="btn-secondary"/>
+                    <button name="action_cancel" type="object" string="Cancel" states="draft,confirmed,in_transit" class="btn-secondary"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,confirmed,in_transit,partially_received,received,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_allocations" type="object" class="oe_stat_button" icon="fa-link">
+                            <field name="allocation_count" widget="statinfo" string="Allocations"/>
+                        </button>
+                        <button name="action_view_pickings" type="object" class="oe_stat_button" icon="fa-truck">
+                            <field name="picking_count" widget="statinfo" string="Transfers"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" placeholder="Import Lot Reference"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="purchase_order_id"/>
+                            <field name="partner_id"/>
+                            <field name="expected_date"/>
+                        </group>
+                        <group>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="expected_qty" readonly="1"/>
+                            <field name="allocated_qty" readonly="1"/>
+                            <field name="received_qty" readonly="1"/>
+                            <field name="available_to_promise_qty" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Expected Lines">
+                            <field name="line_ids">
+                                <tree editable="bottom">
+                                    <field name="purchase_line_id"/>
+                                    <field name="product_id"/>
+                                    <field name="product_uom_id"/>
+                                    <field name="expected_qty"/>
+                                    <field name="allocated_qty" readonly="1"/>
+                                    <field name="received_qty"/>
+                                    <field name="available_to_promise_qty" readonly="1"/>
+                                </tree>
+                            </field>
+                        </page>
+                        <page string="Allocations">
+                            <field name="allocation_ids" context="{'default_import_lot_id': active_id}">
+                                <tree editable="bottom">
+                                    <field name="import_lot_line_id" domain="[('import_lot_id', '=', parent.id)]"/>
+                                    <field name="sale_line_id"/>
+                                    <field name="partner_id" readonly="1"/>
+                                    <field name="product_id" readonly="1"/>
+                                    <field name="allocated_qty"/>
+                                    <field name="received_qty" readonly="1"/>
+                                    <field name="pending_qty" readonly="1"/>
+                                    <field name="state"/>
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_import_lot_search" model="ir.ui.view">
+        <field name="name">import.lot.search</field>
+        <field name="model">import.lot</field>
+        <field name="arch" type="xml">
+            <search string="Import Lots">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <field name="partner_id"/>
+                <filter name="active_lots" string="Active" domain="[('state', 'not in', ('closed', 'cancelled'))]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="group_vendor" string="Vendor" context="{'group_by': 'partner_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_import_lot_allocation_tree" model="ir.ui.view">
+        <field name="name">import.lot.allocation.tree</field>
+        <field name="model">import.lot.allocation</field>
+        <field name="arch" type="xml">
+            <tree string="Import Lot Allocations" decoration-danger="state == 'exception'" decoration-success="state in ('assigned', 'done')">
+                <field name="import_lot_id"/>
+                <field name="sale_order_id"/>
+                <field name="partner_id"/>
+                <field name="product_id"/>
+                <field name="allocated_qty"/>
+                <field name="received_qty"/>
+                <field name="pending_qty"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_import_lot_allocation_form" model="ir.ui.view">
+        <field name="name">import.lot.allocation.form</field>
+        <field name="model">import.lot.allocation</field>
+        <field name="arch" type="xml">
+            <form string="Import Lot Allocation">
+                <header>
+                    <button name="action_reserved" type="object" string="Reserve" states="draft" class="btn-primary"/>
+                    <button name="action_received" type="object" string="Mark Received" states="reserved" class="btn-secondary"/>
+                    <button name="action_assigned" type="object" string="Mark Assigned" states="received" class="btn-secondary"/>
+                    <button name="action_done" type="object" string="Done" states="assigned" class="btn-secondary"/>
+                    <button name="action_exception" type="object" string="Exception" states="draft,reserved,received,assigned" class="btn-secondary"/>
+                    <button name="action_cancel" type="object" string="Cancel" states="draft,reserved,received,assigned,exception" class="btn-secondary"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,reserved,received,assigned,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="import_lot_id"/>
+                            <field name="import_lot_line_id" domain="[('import_lot_id', '=', import_lot_id)]"/>
+                            <field name="sale_line_id"/>
+                            <field name="partner_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_uom_id" readonly="1"/>
+                            <field name="allocated_qty"/>
+                            <field name="received_qty" readonly="1"/>
+                            <field name="assigned_qty"/>
+                            <field name="pending_qty" readonly="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="purchase_order_id" readonly="1"/>
+                        <field name="purchase_line_id" readonly="1"/>
+                        <field name="incoming_picking_id"/>
+                        <field name="outgoing_picking_id"/>
+                        <field name="priority"/>
+                    </group>
+                    <field name="note" placeholder="Notes..."/>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_import_lot_allocation_search" model="ir.ui.view">
+        <field name="name">import.lot.allocation.search</field>
+        <field name="model">import.lot.allocation</field>
+        <field name="arch" type="xml">
+            <search string="Import Lot Allocations">
+                <field name="import_lot_id"/>
+                <field name="sale_order_id"/>
+                <field name="partner_id"/>
+                <field name="product_id"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_lot" string="Import Lot" context="{'group_by': 'import_lot_id'}"/>
+                    <filter name="group_sale" string="Sale Order" context="{'group_by': 'sale_order_id'}"/>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_import_lot" model="ir.actions.act_window">
+        <field name="name">Import Lots</field>
+        <field name="res_model">import.lot</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_import_lot_search"/>
+        <field name="context">{'search_default_active_lots': 1}</field>
+    </record>
+
+    <record id="action_import_lot_allocation" model="ir.actions.act_window">
+        <field name="name">Import Lot Allocations</field>
+        <field name="res_model">import.lot.allocation</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_import_lot_allocation_search"/>
+    </record>
+
+    <menuitem id="menu_import_lot_root" name="Rework" sequence="60" groups="import_lot_allocation.group_rework_user" web_icon="import_lot_allocation,static/description/icon.png"/>
+    <menuitem id="menu_import_lot" name="Import Lots" parent="menu_import_lot_root" action="action_import_lot" sequence="10" groups="import_lot_allocation.group_rework_user"/>
+    <menuitem id="menu_import_lot_allocation" name="Allocations" parent="menu_import_lot_root" action="action_import_lot_allocation" sequence="20" groups="import_lot_allocation.group_rework_user"/>
+</odoo>
