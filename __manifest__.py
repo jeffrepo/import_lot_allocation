@@ -9,7 +9,7 @@ Import Lot Allocation
 
 Adds an Import Lot layer to group incoming supply from purchase orders and allocate it commercially to sale order lines.
 
-Important: this module does not replace Odoo stock lots (stock.lot), packages, quants, or physical reservations. Import Lots are commercial/supply references used for planning and validation at delivery time.
+Important: Import Lots are commercial/supply references. Physical grouping is handled through Odoo packages (stock.quant.package) using the Import Lot reference as the package name.
 ''',
     'category': 'Inventory/Inventory',
     'author': 'OpenAI - ChatGPT',

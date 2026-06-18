@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from odoo import api, fields, models, _
-from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tools.float_utils import float_compare, float_round
 
 
@@ -174,6 +174,10 @@ class ImportLot(models.Model):
             'context': {'default_import_lot_id': self.id},
         }
 
+    def action_sync_purchase_order(self):
+        for lot in self:
+            lot.line_ids._sync_to_purchase_order_line()
+
 
 class ImportLotLine(models.Model):
     _name = 'import.lot.line'
@@ -273,6 +277,85 @@ class ImportLotLine(models.Model):
         for line in self:
             if line.expected_qty < 0:
                 raise ValidationError(_('Expected quantity cannot be negative.'))
+
+    @api.onchange('product_id')
+    def _onchange_product_id(self):
+        for line in self:
+            if line.product_id and not line.product_uom_id:
+                line.product_uom_id = line.product_id.uom_id
+
+    def _sync_to_purchase_order_line(self):
+        """Keep the linked purchase order aligned with Import Lot lines.
+
+        Users may adjust products or quantities in the Import Lot after reviewing the
+        shipment. While the PO is not done/cancelled and quantities are not below
+        what was already received, mirror those changes to purchase.order.line.
+        """
+        for line in self:
+            import_lot = line.import_lot_id
+            po = import_lot.purchase_order_id
+            if not po or not line.product_id:
+                continue
+
+            if po.state in ('done', 'cancel'):
+                raise UserError(_(
+                    'Cannot update Purchase Order %s because it is done or cancelled.'
+                ) % po.name)
+
+            purchase_line = line.purchase_line_id
+
+            if purchase_line:
+                precision = purchase_line.product_uom.rounding or 0.01
+                if float_compare(line.expected_qty, purchase_line.qty_received, precision_rounding=precision) < 0:
+                    raise UserError(_(
+                        'Cannot set %(product)s to %(qty)s because Purchase Order %(po)s already received %(received)s.'
+                    ) % {
+                        'product': line.product_id.display_name,
+                        'qty': line.expected_qty,
+                        'po': po.name,
+                        'received': purchase_line.qty_received,
+                    })
+                purchase_line.write({
+                    'product_id': line.product_id.id,
+                    'product_qty': line.expected_qty,
+                    'product_uom': line.product_uom_id.id,
+                    'name': line.product_id.display_name,
+                })
+            else:
+                purchase_line = self.env['purchase.order.line'].create({
+                    'order_id': po.id,
+                    'product_id': line.product_id.id,
+                    'name': line.product_id.display_name,
+                    'product_qty': line.expected_qty,
+                    'product_uom': line.product_uom_id.id,
+                    'price_unit': line.product_id.standard_price or 0.0,
+                    'date_planned': po.date_planned or fields.Datetime.now(),
+                })
+                line.purchase_line_id = purchase_line.id
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        lines = super().create(vals_list)
+        lines._sync_to_purchase_order_line()
+        return lines
+
+    def write(self, vals):
+        res = super().write(vals)
+        if {'product_id', 'product_uom_id', 'expected_qty'}.intersection(vals):
+            self._sync_to_purchase_order_line()
+        return res
+
+    def unlink(self):
+        for line in self:
+            purchase_line = line.purchase_line_id
+            if not purchase_line:
+                continue
+            if purchase_line.qty_received:
+                raise UserError(_(
+                    'Cannot delete %(product)s because the linked Purchase Order line already has received quantity.'
+                ) % {'product': line.product_id.display_name})
+            purchase_line.product_qty = 0
+        return super().unlink()
 
 
 class ImportLotAllocation(models.Model):

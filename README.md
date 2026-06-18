@@ -1,50 +1,48 @@
-# Import Lot Allocation for Odoo 16
+# Import Lot Allocation - Odoo 16
 
-This module adds a commercial Import Lot layer for incoming supply and sales allocation.
+This module adds an Import Lot flow for purchase/sale allocation and physical stock control by **package**.
 
-## Main concept
+## Included changes
 
-- `stock.lot`: standard Odoo physical traceability lot.
-- `import.lot`: commercial/supply lot created from or related to a Purchase Order.
-- `import.lot.allocation`: logical allocation from an Import Lot line to a Sale Order line.
+- `import.lot`, `import.lot.line`, `import.lot.allocation` models.
+- Purchase Order button: **Create Import Lot**.
+- Import Lot reference based on PO number: `P00001`, `P00001-L02`, etc.
+- Sale Orders can be confirmed freely.
+- Delivery validation checks Import Lot only at picking validation time.
+- Incoming receipts linked to an Import Lot automatically use/create a package named as the Import Lot.
+- Incoming receipt move lines are filled with `qty_done` when empty.
+- Outgoing deliveries linked to an Import Lot consume from the package named as the Import Lot.
+- Import Lot line changes synchronize back to the Purchase Order lines when the PO is not done/cancelled.
+- `company_id` view validation fix for non-multi-company users.
+- Rework menu groups: Rework User / Rework Manager.
 
-The Import Lot reference uses the Purchase Order number when created from a PO, for example:
+## Package-based flow
 
-- `P00045`
-- `P00045-L02`
-- `P00045-L03`
+The implementation now uses `stock.quant.package` as the physical grouping reference.
 
-## Functional changes in this version
+- Import Lot = commercial/supply reference, usually the PO number.
+- Package = physical inventory grouping, same name as Import Lot.
+- Products should be configured with **No Tracking** if the customer wants everything by package instead of `stock.lot`.
 
-1. Sale Order confirmation does **not** validate whether an Import Lot exists.
-2. Import Lot validation is performed only when validating an outgoing picking.
-3. If an outgoing picking or its sale lines are linked to Import Lot allocations, the module blocks validation when the related allocation is pending or in exception.
-4. If the outgoing picking is explicitly linked to an Import Lot, sale lines must have enough received allocation from that same Import Lot.
-5. Physical stock is still controlled by standard Odoo inventory logic.
+If a product is configured with tracking by lots/serial numbers, Odoo standard will still require `stock.lot` during receipt/delivery.
 
-## Included models
+## Recommended flow
 
-- `import.lot`
-- `import.lot.line`
-- `import.lot.allocation`
+1. Confirm PO.
+2. Click **Create Import Lot**.
+3. Confirm Import Lot.
+4. Validate incoming receipt.
+   - The module creates/uses package `P00001`.
+   - The module assigns `result_package_id` and `qty_done` on receipt lines.
+5. Link outgoing delivery to the Import Lot.
+6. Validate delivery.
+   - The module validates stock in the package and assigns `package_id` on delivery lines.
 
-## Installation
+## Purchase synchronization
 
-1. Copy the `import_lot_allocation` folder to your Odoo addons path.
-2. Update the Apps list.
-3. Install **Import Lot Allocation**.
+When users edit Import Lot expected lines:
 
-## Notes
-
-This module does not modify packages, Odoo stock lots, or quants. It is intended as a commercial allocation/reference layer for import/supply planning.
-
-
-## Rework Menu Security
-
-This version adds a dedicated security category and groups:
-
-- Rework User
-- Rework Manager
-
-Only users assigned to Rework User or Rework Manager can see the root Rework app menu.
-The root menu is marked with a web icon so it appears in the Odoo app switcher / app center.
+- Existing linked PO lines are updated.
+- New Import Lot products create new PO lines.
+- Lines cannot be reduced below quantities already received.
+- Done/cancelled POs are not modified.
