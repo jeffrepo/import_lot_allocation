@@ -10,8 +10,12 @@
                     <field name="import_lot_allocation_count" widget="statinfo" string="Import Lot Allocations"/>
                 </button>
             </xpath>
+            <xpath expr="//field[@name='order_line']/tree/field[@name='product_uom_qty']" position="after">
+                <field name="package_id" optional="show"/>
+                <field name="package_available_qty" readonly="1" optional="show"/>
+            </xpath>
             <xpath expr="//field[@name='order_line']/tree/field[@name='qty_delivered']" position="after">
-                <field name="import_lot_allocated_qty" readonly="1" optional="show"/>
+                <field name="import_lot_allocated_qty" readonly="1" optional="hide"/>
             </xpath>
         </field>
     </record>

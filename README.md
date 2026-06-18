@@ -46,3 +46,14 @@ When users edit Import Lot expected lines:
 - New Import Lot products create new PO lines.
 - Lines cannot be reduced below quantities already received.
 - Done/cancelled POs are not modified.
+
+## Package per Sale Order Line
+
+This version moves outgoing package selection from picking-level Import Lot to sale order lines / stock moves.
+
+- Incoming receipts can still use `Import Lot` on the receipt. Validation creates or reuses a physical package with the Import Lot reference and receives products into that package.
+- Sale order lines now include `Package` and `Available in Package`.
+- When the sale order is confirmed, the selected package is copied to the generated stock move.
+- Updating the package on a sale order line updates open stock moves.
+- Delivery validation checks package stock per move/product, allowing one delivery to contain different products from different packages.
+- The picking-level `Import Lot` is no longer the main outgoing validation source; it remains useful for incoming receipts and legacy reference only.

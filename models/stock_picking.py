@@ -4,6 +4,17 @@ from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
 
 
+class StockMove(models.Model):
+    _inherit = 'stock.move'
+
+    package_id = fields.Many2one(
+        'stock.quant.package',
+        string='Package',
+        copy=False,
+        help='Physical package selected from the sale order line. Outgoing move lines will consume from this package.',
+    )
+
+
 class StockPicking(models.Model):
     _inherit = 'stock.picking'
 
@@ -18,9 +29,9 @@ class StockPicking(models.Model):
     def button_validate(self):
         # For incoming receipts, put all received products into a package named as the Import Lot.
         self._assign_import_lot_package_on_receipt()
-        # For outgoing deliveries, consume from the package linked to the Import Lot and validate coverage.
-        self._assign_import_lot_package_on_delivery()
-        self._check_import_lot_delivery_rules()
+        # For outgoing deliveries, consume package per stock move / sale order line.
+        self._assign_sale_line_packages_on_delivery()
+        self._check_package_delivery_rules()
         res = super().button_validate()
         self._update_import_lot_after_receipt()
         return res
@@ -47,11 +58,7 @@ class StockPicking(models.Model):
         return qty
 
     def _assign_import_lot_package_on_receipt(self):
-        """Use the Import Lot reference as the physical package on receipts.
-
-        This flow intentionally uses packages instead of stock.lot. Products should not require
-        lot/serial tracking if the implementation is fully package-based.
-        """
+        """Use the Import Lot reference as the physical package on receipts."""
         MoveLine = self.env['stock.move.line']
         for picking in self.filtered(lambda p: p.picking_type_code == 'incoming' and p.import_lot_id):
             package = self._get_or_create_import_lot_package(picking.import_lot_id, picking.company_id)
@@ -96,12 +103,12 @@ class StockPicking(models.Model):
                         'company_id': picking.company_id.id,
                     })
 
-    def _assign_import_lot_package_on_delivery(self):
-        """When a delivery is linked to an Import Lot, consume from that Import Lot package."""
+    def _assign_sale_line_packages_on_delivery(self):
+        """Use the package selected on each sale line / stock move for delivery move lines."""
         MoveLine = self.env['stock.move.line']
-        for picking in self.filtered(lambda p: p.picking_type_code == 'outgoing' and p.import_lot_id):
-            package = self._get_or_create_import_lot_package(picking.import_lot_id, picking.company_id)
-            for move in picking.move_ids_without_package.filtered(lambda m: m.product_id and m.product_id.detailed_type == 'product'):
+        for picking in self.filtered(lambda p: p.picking_type_code == 'outgoing'):
+            for move in picking.move_ids_without_package.filtered(lambda m: m.product_id and m.product_id.detailed_type == 'product' and m.package_id):
+                package = move.package_id
                 qty_to_deliver = self._get_move_qty_to_process(move)
                 if not qty_to_deliver:
                     continue
@@ -142,44 +149,25 @@ class StockPicking(models.Model):
                         'company_id': picking.company_id.id,
                     })
 
-    def _check_import_lot_delivery_rules(self):
-        """Validate Import Lot rules at outgoing picking validation time.
+    def _check_package_delivery_rules(self):
+        """Validate package stock at outgoing picking validation time.
 
-        Sale orders can be confirmed freely. If the delivery is linked to an Import Lot,
-        the physical stock must exist inside the package named as that Import Lot.
+        Sale orders can be confirmed freely. If a sale line / stock move has a selected
+        package, the physical stock must exist inside that package. This replaces the
+        previous picking-level Import Lot validation, allowing one delivery to contain
+        products from different packages.
         """
         Quant = self.env['stock.quant']
         for picking in self.filtered(lambda p: p.picking_type_code == 'outgoing'):
-            sale = picking.sale_id
-            if sale:
-                blocking_allocations = sale.order_line.mapped('import_lot_allocation_ids').filtered(
-                    lambda a: a.state in ('draft', 'reserved', 'exception') and a.pending_qty > 0
-                )
-                if blocking_allocations:
-                    details = '\n'.join('- %s: %s %s (%s)' % (
-                        a.product_id.display_name,
-                        a.pending_qty,
-                        a.product_uom_id.name,
-                        a.import_lot_id.name,
-                    ) for a in blocking_allocations)
-                    raise UserError(_(
-                        'You cannot validate this delivery because some Import Lot allocations are still pending or in exception.\n\n%s'
-                    ) % details)
-
-            if not picking.import_lot_id:
-                continue
-
-            package = self._get_or_create_import_lot_package(picking.import_lot_id, picking.company_id)
             errors = []
-            for move in picking.move_ids_without_package.filtered(lambda m: m.product_id and m.product_id.detailed_type == 'product'):
+            for move in picking.move_ids_without_package.filtered(lambda m: m.product_id and m.product_id.detailed_type == 'product' and m.package_id):
                 qty_to_deliver = self._get_move_qty_to_process(move)
                 if not qty_to_deliver:
                     continue
 
-                qty_in_move_uom = qty_to_deliver
                 quants = Quant.search([
                     ('product_id', '=', move.product_id.id),
-                    ('package_id', '=', package.id),
+                    ('package_id', '=', move.package_id.id),
                     ('location_id.usage', '=', 'internal'),
                     ('company_id', 'in', [False, picking.company_id.id]),
                 ])
@@ -190,22 +178,20 @@ class StockPicking(models.Model):
                     rounding_method='HALF-UP',
                 )
                 precision = move.product_uom.rounding or 0.01
-                if float_compare(available_qty, qty_in_move_uom, precision_rounding=precision) < 0:
+                if float_compare(available_qty, qty_to_deliver, precision_rounding=precision) < 0:
                     errors.append(_(
                         '- %(product)s: delivery quantity %(delivery_qty)s %(uom)s, available in package %(package)s: %(available)s %(uom)s.'
                     ) % {
                         'product': move.product_id.display_name,
-                        'delivery_qty': qty_in_move_uom,
+                        'delivery_qty': qty_to_deliver,
                         'available': available_qty,
-                        'package': package.name,
+                        'package': move.package_id.name,
                         'uom': move.product_uom.name,
                     })
             if errors:
                 raise UserError(_(
-                    'This delivery is linked to Import Lot %(lot)s, but some products do not have enough stock in package %(package)s.\n\n%(details)s'
+                    'Some products do not have enough stock in the selected packages.\n\n%(details)s'
                 ) % {
-                    'lot': picking.import_lot_id.name,
-                    'package': package.name,
                     'details': '\n'.join(errors),
                 })
 
