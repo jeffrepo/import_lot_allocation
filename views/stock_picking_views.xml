@@ -9,11 +9,9 @@
                 <field name="import_lot_id"/>
             </xpath>
             <xpath expr="//field[@name='move_ids_without_package']/tree/field[@name='product_id']" position="after">
-                <field name="planned_sale_order_id" invisible="1"/>
-                <field name="planned_package_id"
-                       domain="[('sale_order_id', '=', planned_sale_order_id)]"
-                       context="{'default_sale_order_id': planned_sale_order_id}"
-                       attrs="{'readonly': [('state', 'in', ('done', 'cancel'))], 'column_invisible': [('parent.picking_type_code', '!=', 'outgoing')]}"
+                <field name="planned_import_lot_id"
+                       attrs="{'column_invisible': [('parent.picking_type_code', '!=', 'outgoing')]}"
+                       readonly="1"
                        optional="show"
                        groups="import_lot_allocation.group_rework_user"/>
             </xpath>

@@ -26,6 +26,15 @@ class StockMove(models.Model):
             'A physical package is created when the move is done.'
         ),
     )
+    planned_import_lot_id = fields.Many2one(
+        'import.lot',
+        string='Import Lot',
+        related='planned_package_id.import_lot_id',
+        store=True,
+        readonly=True,
+        index=True,
+        help='Import Lot selected on the source Sale Order line.',
+    )
     # Kept for backward compatibility with the previous package-per-line version.
     package_id = fields.Many2one(
         'stock.quant.package',

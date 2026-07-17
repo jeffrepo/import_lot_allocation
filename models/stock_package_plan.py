@@ -25,6 +25,16 @@ class StockPackagePlan(models.Model):
         index=True,
         tracking=True,
     )
+    import_lot_id = fields.Many2one(
+        'import.lot',
+        string='Import Lot',
+        ondelete='restrict',
+        check_company=True,
+        copy=False,
+        index=True,
+        tracking=True,
+        help='Import Lot selected on the Sale Order lines. This plan is created automatically.',
+    )
     company_id = fields.Many2one(
         related='sale_order_id.company_id',
         store=True,
@@ -78,7 +88,40 @@ class StockPackagePlan(models.Model):
             'unique(name, company_id)',
             'The planned package reference must be unique per company.',
         ),
+        (
+            'sale_order_import_lot_uniq',
+            'unique(sale_order_id, import_lot_id)',
+            'An Import Lot can only have one package plan per Sale Order.',
+        ),
     ]
+
+    @api.model
+    def _get_or_create_for_import_lot(self, sale_order, import_lot):
+        """Return the internal delivery plan for a Sale Order and Import Lot."""
+        sale_order.ensure_one()
+        import_lot.ensure_one()
+        if sale_order.company_id != import_lot.company_id:
+            raise ValidationError(_(
+                'The Import Lot and Sale Order must belong to the same company.'
+            ))
+
+        plan = self.search([
+            ('sale_order_id', '=', sale_order.id),
+            ('import_lot_id', '=', import_lot.id),
+        ], limit=1)
+        if not plan:
+            plan = self.create({
+                'name': '%s / %s' % (import_lot.name, sale_order.name),
+                'sale_order_id': sale_order.id,
+                'import_lot_id': import_lot.id,
+            })
+        return plan
+
+    def _unlink_if_unused_automatic(self):
+        """Remove empty internal plans created from an Import Lot selection."""
+        for plan in self.filtered('import_lot_id'):
+            if not plan.sale_line_ids and not plan.move_ids and not plan.real_package_ids:
+                plan.unlink()
 
     @api.depends('real_package_ids')
     def _compute_real_package_count(self):
@@ -100,9 +143,13 @@ class StockPackagePlan(models.Model):
             else:
                 plan.state = 'draft'
 
-    @api.constrains('sale_order_id', 'sale_line_ids', 'move_ids')
+    @api.constrains('sale_order_id', 'import_lot_id', 'sale_line_ids', 'move_ids')
     def _check_sale_lines_order(self):
         for plan in self:
+            if plan.import_lot_id and plan.import_lot_id.company_id != plan.sale_order_id.company_id:
+                raise ValidationError(_(
+                    'The Import Lot and Sale Order on a planned package must belong to the same company.'
+                ))
             invalid_lines = plan.sale_line_ids.filtered(lambda line: line.order_id != plan.sale_order_id)
             invalid_moves = plan.move_ids.filtered(
                 lambda move: move.sale_line_id and move.sale_line_id.order_id != plan.sale_order_id

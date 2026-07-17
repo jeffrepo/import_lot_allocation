@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Import Lot Allocation',
-    'version': '16.0.3.0.0',
+    'version': '16.0.3.1.0',
     'summary': 'Commercial import allocation and planned delivery packages',
     'description': '''
 Import Lot Allocation
@@ -10,7 +10,8 @@ Import Lot Allocation
 Adds an Import Lot layer to group incoming supply from purchase orders and allocate it commercially to sale order lines.
 
 Important: Import Lots are commercial/supply references. Incoming receipts can create Import Lot packages,
-while outgoing deliveries use planned packages and create the physical stock.quant.package only when completed.
+while Sale Order lines select an existing Import Lot. The internal delivery plan is created automatically,
+and the physical stock.quant.package is created only when the delivery is completed.
 ''',
     'category': 'Inventory/Inventory',
     'author': 'OpenAI - ChatGPT',

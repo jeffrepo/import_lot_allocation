@@ -7,6 +7,7 @@
             <tree string="Planned Packages" decoration-success="state == 'done'" decoration-muted="state == 'cancelled'">
                 <field name="name"/>
                 <field name="sale_order_id"/>
+                <field name="import_lot_id"/>
                 <field name="partner_id"/>
                 <field name="package_type_id"/>
                 <field name="real_package_count"/>
@@ -35,6 +36,7 @@
                     <group>
                         <group>
                             <field name="sale_order_id"/>
+                            <field name="import_lot_id" readonly="1"/>
                             <field name="partner_id" readonly="1"/>
                         </group>
                         <group>
@@ -95,35 +97,16 @@
                 <button name="action_view_import_lot_allocations" type="object" class="oe_stat_button" icon="fa-tags">
                     <field name="import_lot_allocation_count" widget="statinfo" string="Import Lot Allocations"/>
                 </button>
-                <button name="action_view_planned_packages" type="object" class="oe_stat_button" icon="fa-cubes"
-                        groups="import_lot_allocation.group_rework_user">
-                    <field name="planned_package_count" widget="statinfo" string="Planned Packages"/>
-                </button>
             </xpath>
             <xpath expr="//field[@name='order_line']/tree/field[@name='product_uom_qty']" position="after">
-                <field name="planned_package_id"
-                       domain="[('sale_order_id', '=', parent.id)]"
-                       context="{'default_sale_order_id': parent.id}"
+                <field name="import_lot_id"
+                       string="Import Lot"
+                       domain="[('company_id', '=', parent.company_id), ('state', 'not in', ('closed', 'cancelled')), ('line_ids.product_id', '=', product_id), ('line_ids.available_to_promise_qty', '>', 0)]"
                        groups="import_lot_allocation.group_rework_user"
                        optional="show"/>
             </xpath>
             <xpath expr="//field[@name='order_line']/tree/field[@name='qty_delivered']" position="after">
                 <field name="import_lot_allocated_qty" readonly="1" optional="hide"/>
-            </xpath>
-            <xpath expr="//notebook" position="inside">
-                <page string="Planned Packages" name="planned_packages"
-                      groups="import_lot_allocation.group_rework_user">
-                    <field name="planned_package_ids" context="{'default_sale_order_id': active_id}">
-                        <tree editable="bottom">
-                            <field name="company_id" invisible="1"/>
-                            <field name="name"/>
-                            <field name="package_type_id" domain="['|', ('company_id', '=', False), ('company_id', '=', company_id)]"/>
-                            <field name="real_package_count" readonly="1"/>
-                            <field name="state" readonly="1"/>
-                            <button name="action_view_real_packages" type="object" string="Physical Packages" icon="fa-cubes"/>
-                        </tree>
-                    </field>
-                </page>
             </xpath>
         </field>
     </record>

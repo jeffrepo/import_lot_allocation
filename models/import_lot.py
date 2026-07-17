@@ -493,6 +493,13 @@ class ImportLotAllocation(models.Model):
         ('cancelled', 'Cancelled'),
         ('exception', 'Exception'),
     ], string='Status', default='reserved', tracking=True, index=True)
+    auto_from_sale_line = fields.Boolean(
+        string='Automatic Sale Line Allocation',
+        default=False,
+        copy=False,
+        index=True,
+        help='Technical flag for allocations maintained from the Import Lot selected on a Sale Order line.',
+    )
     company_id = fields.Many2one(
         related='import_lot_id.company_id',
         store=True,
