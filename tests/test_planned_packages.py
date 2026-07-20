@@ -18,15 +18,20 @@ class TestPlannedDeliveryPackages(common.TransactionCase):
             'list_price': 10.0,
         })
         cls.stock_location = cls.env.ref('stock.stock_location_stock')
+        cls.source_package = cls.env['stock.quant.package'].create({
+            'name': 'PACKAGE-PLANNED-SOURCE',
+        })
         cls.env['stock.quant']._update_available_quantity(
             cls.product,
             cls.stock_location,
             10.0,
+            package_id=cls.source_package,
         )
         cls.import_lot = cls.env['import.lot'].create({
             'name': 'PO-PLANNED-PACKAGE',
             'company_id': cls.env.company.id,
             'state': 'confirmed',
+            'source_package_id': cls.source_package.id,
         })
         cls.import_lot_line = cls.env['import.lot.line'].create({
             'import_lot_id': cls.import_lot.id,

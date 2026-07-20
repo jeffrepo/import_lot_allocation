@@ -25,6 +25,33 @@ class ImportLot(models.Model):
         index=True,
         tracking=True,
     )
+    restricted_sale_order_id = fields.Many2one(
+        'sale.order',
+        string='Reserved for Sale Order',
+        ondelete='restrict',
+        check_company=True,
+        copy=False,
+        index=True,
+        tracking=True,
+        help='When set, this Import Lot can only be selected on lines of this Sale Order.',
+    )
+    source_package_id = fields.Many2one(
+        'stock.quant.package',
+        string='Physical Source Package',
+        ondelete='restrict',
+        check_company=True,
+        copy=False,
+        readonly=True,
+        index=True,
+        tracking=True,
+        help='Physical source package produced by Rework for this commercial supply.',
+    )
+    rework_order_ids = fields.One2many(
+        'stock.rework.order',
+        'import_lot_id',
+        string='Rework Orders',
+        readonly=True,
+    )
     partner_id = fields.Many2one(
         'res.partner',
         string='Vendor',
@@ -102,6 +129,10 @@ class ImportLot(models.Model):
         string='Picking Count',
         compute='_compute_counts',
     )
+    rework_order_count = fields.Integer(
+        string='Rework Orders',
+        compute='_compute_counts',
+    )
 
     @api.depends('line_ids.expected_qty', 'line_ids.allocated_qty', 'line_ids.received_qty', 'line_ids.available_to_promise_qty')
     def _compute_totals(self):
@@ -115,6 +146,7 @@ class ImportLot(models.Model):
         for lot in self:
             lot.allocation_count = len(lot.allocation_ids)
             lot.picking_count = len(lot.picking_ids)
+            lot.rework_order_count = len(lot.rework_order_ids)
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -174,6 +206,16 @@ class ImportLot(models.Model):
             'context': {'default_import_lot_id': self.id},
         }
 
+    def action_view_rework_orders(self):
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Rework Orders'),
+            'res_model': 'stock.rework.order',
+            'view_mode': 'tree,form',
+            'domain': [('import_lot_id', '=', self.id)],
+        }
+
     def action_sync_purchase_order(self):
         for lot in self:
             lot.line_ids._sync_to_purchase_order_line()
@@ -217,8 +259,16 @@ class ImportLotLine(models.Model):
         string='Received Qty',
         digits='Product Unit of Measure',
         compute='_compute_received_qty',
+        inverse='_inverse_received_qty',
         store=True,
         readonly=False,
+    )
+    manual_received_qty = fields.Float(
+        string='Manual / Rework Received Qty',
+        digits='Product Unit of Measure',
+        default=0.0,
+        copy=False,
+        help='Technical quantity used for Import Lots that do not come from a Purchase Order.',
     )
     allocation_ids = fields.One2many(
         'import.lot.allocation',
@@ -255,11 +305,17 @@ class ImportLotLine(models.Model):
                 line.product_uom_id = pol.product_uom
                 line.expected_qty = pol.product_qty
 
-    @api.depends('purchase_line_id.qty_received')
+    @api.depends('purchase_line_id.qty_received', 'manual_received_qty')
     def _compute_received_qty(self):
         for line in self:
             if line.purchase_line_id:
                 line.received_qty = line.purchase_line_id.qty_received
+            else:
+                line.received_qty = line.manual_received_qty
+
+    def _inverse_received_qty(self):
+        for line in self.filtered(lambda record: not record.purchase_line_id):
+            line.manual_received_qty = line.received_qty
 
     @api.depends('allocation_ids.allocated_qty', 'allocation_ids.state')
     def _compute_allocated_qty(self):

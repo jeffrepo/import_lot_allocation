@@ -35,6 +35,15 @@ class StockMove(models.Model):
         index=True,
         help='Import Lot selected on the source Sale Order line.',
     )
+    planned_source_package_id = fields.Many2one(
+        'stock.quant.package',
+        string='Source Package',
+        related='planned_package_id.source_package_id',
+        store=True,
+        readonly=True,
+        index=True,
+        help='Physical source package supplied by the selected Import Lot or Rework.',
+    )
     # Kept for backward compatibility with the previous package-per-line version.
     package_id = fields.Many2one(
         'stock.quant.package',
@@ -117,6 +126,36 @@ class StockMove(models.Model):
                 lambda line: line.result_package_id != physical_package
             ).write({'result_package_id': physical_package.id})
 
+    def _get_planned_source_package_available_qty(self):
+        """Return usable quantity in the plan's source package, including this move's reservation."""
+        self.ensure_one()
+        source_package = self.planned_package_id.source_package_id
+        if not source_package:
+            return 0.0
+
+        available_product_uom = self.env['stock.quant']._get_available_quantity(
+            self.product_id,
+            self.location_id,
+            package_id=source_package,
+            strict=False,
+        )
+        available_move_uom = self.product_id.uom_id._compute_quantity(
+            available_product_uom,
+            self.product_uom,
+            round=False,
+        )
+        reserved_by_move = sum(
+            line.product_uom_id._compute_quantity(
+                line.reserved_uom_qty,
+                self.product_uom,
+                round=False,
+            )
+            for line in self.move_line_ids.filtered(
+                lambda move_line: move_line.package_id == source_package
+            )
+        )
+        return available_move_uom + reserved_by_move
+
     def _action_done(self, cancel_backorder=False):
         plans = self.mapped('planned_package_id')
         self._assign_physical_packages_from_plans()
@@ -140,6 +179,7 @@ class StockPicking(models.Model):
         # For incoming receipts, put all received products into a package named as the Import Lot.
         self._assign_import_lot_package_on_receipt()
         # For outgoing deliveries, prepare quantities while keeping the package virtual.
+        self._check_planned_source_package_delivery_rules()
         self._prepare_planned_packages_on_delivery()
         # Preserve the previous behavior only for open records that still use the legacy field.
         self._assign_legacy_source_packages_on_delivery()
@@ -330,6 +370,7 @@ class StockPicking(models.Model):
                 qty_to_deliver = self._get_move_qty_to_process(move)
                 if not qty_to_deliver:
                     continue
+                source_package = move.planned_package_id.source_package_id
 
                 if not move.move_line_ids:
                     MoveLine.create({
@@ -340,6 +381,7 @@ class StockPicking(models.Model):
                         'location_id': move.location_id.id,
                         'location_dest_id': move.location_dest_id.id,
                         'qty_done': qty_to_deliver,
+                        'package_id': source_package.id if source_package else False,
                         'company_id': picking.company_id.id,
                     })
                     continue
@@ -349,6 +391,8 @@ class StockPicking(models.Model):
                     if not move_line.qty_done:
                         qty_line = getattr(move_line, 'reserved_uom_qty', 0.0) or remaining_qty
                         move_line.qty_done = qty_line
+                    if source_package and move_line.package_id != source_package:
+                        move_line.package_id = source_package.id
                     remaining_qty -= move_line.qty_done
 
                 if float_compare(remaining_qty, 0.0, precision_rounding=move.product_uom.rounding or 0.01) > 0:
@@ -360,8 +404,57 @@ class StockPicking(models.Model):
                         'location_id': move.location_id.id,
                         'location_dest_id': move.location_dest_id.id,
                         'qty_done': remaining_qty,
+                        'package_id': source_package.id if source_package else False,
                         'company_id': picking.company_id.id,
                     })
+
+    def _check_planned_source_package_delivery_rules(self):
+        for picking in self.filtered(lambda record: record.picking_type_code == 'outgoing'):
+            errors = []
+            planned_moves = picking.move_ids_without_package.filtered(
+                lambda move: move.product_id
+                and move.product_id.detailed_type == 'product'
+                and move.planned_package_id
+            )
+            for move in planned_moves:
+                qty_to_deliver = self._get_move_qty_to_process(move)
+                if not qty_to_deliver:
+                    continue
+                source_package = move.planned_package_id.source_package_id
+                if (
+                    move.planned_package_id.import_lot_id.rework_order_ids
+                    and not source_package
+                ):
+                    errors.append(_(
+                        '- %(product)s: Import Lot %(lot)s does not have a physical source package yet. '
+                        'Complete its purchase receipt or Rework first.'
+                    ) % {
+                        'product': move.product_id.display_name,
+                        'lot': move.planned_package_id.import_lot_id.name,
+                    })
+                    continue
+                if not source_package:
+                    continue
+                available_qty = move._get_planned_source_package_available_qty()
+                if float_compare(
+                    available_qty,
+                    qty_to_deliver,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                ) < 0:
+                    errors.append(_(
+                        '- %(product)s: delivery quantity %(delivery_qty)s %(uom)s, available in source package '
+                        '%(package)s: %(available)s %(uom)s.'
+                    ) % {
+                        'product': move.product_id.display_name,
+                        'delivery_qty': qty_to_deliver,
+                        'available': available_qty,
+                        'package': source_package.name,
+                        'uom': move.product_uom.name,
+                    })
+            if errors:
+                raise UserError(_(
+                    'Some planned source packages do not have enough available stock.\n\n%(details)s'
+                ) % {'details': '\n'.join(errors)})
 
     def _update_import_lot_after_receipt(self):
         for picking in self.filtered(lambda p: p.picking_type_code == 'incoming' and p.import_lot_id):

@@ -1,6 +1,6 @@
 # Import Lot Allocation - Odoo 16
 
-This module adds an Import Lot flow for purchase/sale allocation and planned delivery packages.
+This module adds an Import Lot flow for purchase/sale allocation, stock Rework, and planned delivery packages.
 
 ## Included changes
 
@@ -14,6 +14,8 @@ This module adds an Import Lot flow for purchase/sale allocation and planned del
 - Sale Order lines select an existing Import Lot; the delivery plan is created automatically.
 - A physical package is created only when the outgoing transfer is completed.
 - Every partial delivery/backorder creates a different physical package.
+- Rework Orders consume product A from a physical package and produce product B in a new package.
+- Rework output can be reserved for a specific Sale Order without purchasing product B.
 - Import Lot line changes synchronize back to the Purchase Order lines when the PO is not done/cancelled.
 - `company_id` view validation fix for non-multi-company users.
 - Rework menu groups: Rework User / Rework Manager.
@@ -26,6 +28,7 @@ The implementation now uses `stock.quant.package` as the physical grouping refer
 - Incoming package = physical grouping created when an Import Lot receipt is validated.
 - Planned package = internal non-physical delivery grouping created automatically from the selected Import Lot.
 - Physical delivery package = `stock.quant.package` created when the outgoing stock move is done.
+- Rework result package = physical source package containing the converted product.
 - Products should be configured with **No Tracking** if the customer wants everything by package instead of `stock.lot`.
 
 If a product is configured with tracking by lots/serial numbers, Odoo standard will still require `stock.lot` during receipt/delivery.
@@ -68,4 +71,29 @@ Outgoing packages have two separate stages so users can adjust Sale Order quanti
 - Updating the Import Lot or quantity on a Sale Order line updates its automatic allocation and open stock moves.
 - When an outgoing move is actually completed, the module creates one physical package per planned package and picking.
 - Partial deliveries keep the plan on the backorder and create a new physical package when that backorder is completed.
-- Existing manually assigned source packages are not used as the delivery plan; Odoo standard source reservation remains in control.
+- Legacy manually assigned packages are not treated as delivery plans. A Rework result package is enforced as the physical source for its delivery.
+
+## Rework A to B
+
+Rework Orders are available from **Rework → Rework Orders**.
+
+Example: package `0001` contains 10 units of Lemon A and 7 units must become Lemon B.
+
+1. Create a Rework Order.
+2. Select source package `0001`, source product Lemon A, and quantity 7.
+3. Select result product Lemon B and result quantity 7.
+4. Select the Sale Order and its Lemon B line.
+5. Click **Confirm**.
+   - The module creates an Import Lot with no Purchase Order.
+   - The Import Lot is restricted to the selected Sale Order.
+   - The Sale Order line receives the Import Lot allocation immediately, before Lemon B exists physically.
+6. Click **Process Rework**.
+   - A stock move consumes 7 Lemon A from package `0001` into the Production location.
+   - A second stock move produces 7 Lemon B into a new package named with the Rework reference.
+   - Package `0001` keeps 3 Lemon A.
+   - The Rework Import Lot becomes received and its internal delivery plan points to the result package.
+7. Validate the Sale Order delivery.
+   - The delivery consumes Lemon B specifically from the Rework result package.
+   - The final customer package is still created only when the delivery is validated.
+
+The simple Rework flow supports products configured with **No Tracking**. Products tracked by serial or stock lot require a separate lot/serial assignment flow.

@@ -37,6 +37,7 @@
                         <group>
                             <field name="sale_order_id"/>
                             <field name="import_lot_id" readonly="1"/>
+                            <field name="source_package_id" readonly="1"/>
                             <field name="partner_id" readonly="1"/>
                         </group>
                         <group>
@@ -101,7 +102,7 @@
             <xpath expr="//field[@name='order_line']/tree/field[@name='product_uom_qty']" position="after">
                 <field name="import_lot_id"
                        string="Import Lot"
-                       domain="[('company_id', '=', parent.company_id), ('state', 'not in', ('closed', 'cancelled')), ('line_ids.product_id', '=', product_id), ('line_ids.available_to_promise_qty', '>', 0)]"
+                       domain="[('company_id', '=', parent.company_id), ('state', 'not in', ('closed', 'cancelled')), ('line_ids.product_id', '=', product_id), ('line_ids.available_to_promise_qty', '>', 0), '|', ('restricted_sale_order_id', '=', False), ('restricted_sale_order_id', '=', parent.id)]"
                        groups="import_lot_allocation.group_rework_user"
                        optional="show"/>
             </xpath>

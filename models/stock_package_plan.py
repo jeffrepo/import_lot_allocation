@@ -52,6 +52,16 @@ class StockPackagePlan(models.Model):
         check_company=True,
         tracking=True,
     )
+    source_package_id = fields.Many2one(
+        'stock.quant.package',
+        string='Physical Source Package',
+        ondelete='restrict',
+        check_company=True,
+        copy=False,
+        index=True,
+        tracking=True,
+        help='Physical package that supplies this plan once Rework is completed.',
+    )
     sale_line_ids = fields.One2many(
         'sale.order.line',
         'planned_package_id',
@@ -114,6 +124,7 @@ class StockPackagePlan(models.Model):
                 'name': '%s / %s' % (import_lot.name, sale_order.name),
                 'sale_order_id': sale_order.id,
                 'import_lot_id': import_lot.id,
+                'source_package_id': import_lot.source_package_id.id or False,
             })
         return plan
 

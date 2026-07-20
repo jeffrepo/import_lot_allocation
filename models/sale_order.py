@@ -153,6 +153,16 @@ class SaleOrderLine(models.Model):
                 raise ValidationError(_(
                     'Import Lot %s is closed or cancelled and cannot be selected.'
                 ) % line.import_lot_id.name)
+            if (
+                line.import_lot_id.restricted_sale_order_id
+                and line.import_lot_id.restricted_sale_order_id != line.order_id
+            ):
+                raise ValidationError(_(
+                    'Import Lot %(lot)s is reserved for Sale Order %(sale)s.'
+                ) % {
+                    'lot': line.import_lot_id.name,
+                    'sale': line.import_lot_id.restricted_sale_order_id.name,
+                })
             if line.product_id not in line.import_lot_id.line_ids.mapped('product_id'):
                 raise ValidationError(_(
                     'Import Lot %(lot)s does not contain product %(product)s.'
