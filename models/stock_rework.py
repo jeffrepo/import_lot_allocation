@@ -115,6 +115,10 @@ class StockReworkOrder(models.Model):
         required=True,
         tracking=True,
         domain="[('order_id', '=', sale_order_id), ('product_id', '=', destination_product_id), ('display_type', '=', False)]",
+        help=(
+            'If the Rework result covers only part of this line, the module automatically '
+            'splits that quantity into a separate Sale Order line assigned to the Rework.'
+        ),
     )
     import_lot_id = fields.Many2one(
         'import.lot',
@@ -298,24 +302,52 @@ class StockReworkOrder(models.Model):
                     'lot': rework.sale_line_id.import_lot_id.name,
                 })
 
-            sale_qty = rework.sale_line_id.product_uom._compute_quantity(
-                rework.sale_line_id.product_uom_qty,
-                rework.destination_uom_id,
-                round=False,
-            )
-            if float_compare(
-                rework.destination_qty,
-                sale_qty,
-                precision_rounding=rework.destination_uom_id.rounding or 0.01,
-            ) < 0:
-                raise UserError(_(
-                    'The Rework result quantity (%(result)s %(uom)s) must cover the selected Sale Order line '
-                    'quantity (%(sale)s %(uom)s). Split the Sale Order line first if this Rework is only for part of it.'
-                ) % {
-                    'result': rework.destination_qty,
-                    'sale': sale_qty,
-                    'uom': rework.destination_uom_id.name,
-                })
+    def _split_sale_line_for_partial_result(self):
+        """Keep one physical source package per Sale Order line.
+
+        A partial Rework cannot point the complete sale line to its package because
+        the remaining quantity may come from unrestricted stock or another Import Lot.
+        Split the result quantity into its own line before assigning the Rework lot.
+        """
+        self.ensure_one()
+        sale_line = self.sale_line_id
+        rework_sale_qty = self.destination_uom_id._compute_quantity(
+            self.destination_qty,
+            sale_line.product_uom,
+            round=False,
+        )
+        precision = sale_line.product_uom.rounding or 0.01
+        if float_compare(
+            rework_sale_qty,
+            sale_line.product_uom_qty,
+            precision_rounding=precision,
+        ) >= 0:
+            return sale_line
+
+        active_invoice_lines = sale_line.invoice_lines.filtered(
+            lambda invoice_line: invoice_line.move_id.state != 'cancel'
+        )
+        if (
+            float_compare(sale_line.qty_delivered, 0.0, precision_rounding=precision) > 0
+            or float_compare(sale_line.qty_invoiced, 0.0, precision_rounding=precision) > 0
+            or active_invoice_lines
+        ):
+            raise UserError(_(
+                'Sale Order line %(line)s is already delivered or invoiced and cannot be split automatically. '
+                'Add a separate Sale Order line for the Rework quantity.'
+            ) % {'line': sale_line.display_name})
+
+        remaining_qty = sale_line.product_uom_qty - rework_sale_qty
+        sale_line.write({'product_uom_qty': remaining_qty})
+        rework_line = sale_line.copy(default={
+            'sequence': sale_line.sequence + 1,
+            'product_uom_qty': rework_sale_qty,
+            'import_lot_id': False,
+            'planned_package_id': False,
+            'package_id': False,
+        })
+        self.sale_line_id = rework_line.id
+        return rework_line
 
     def _create_rework_import_lot(self):
         self.ensure_one()
@@ -340,6 +372,7 @@ class StockReworkOrder(models.Model):
         for rework in self:
             if rework.state != 'draft':
                 continue
+            rework._split_sale_line_for_partial_result()
             rework._check_can_confirm()
             import_lot = rework.import_lot_id or rework._create_rework_import_lot()
             rework.sale_line_id.import_lot_id = import_lot.id

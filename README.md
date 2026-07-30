@@ -16,6 +16,7 @@ This module adds an Import Lot flow for purchase/sale allocation, stock Rework, 
 - Every partial delivery/backorder creates a different physical package.
 - Rework Orders consume all or part of product A and add product B to the same physical package.
 - Rework output can be reserved for a specific Sale Order without purchasing product B.
+- A partial Rework automatically splits its quantity into a dedicated Sale Order line; the remaining quantity can use normal stock.
 - Import Lot line changes synchronize back to the Purchase Order lines when the PO is not done/cancelled.
 - `company_id` view validation fix for non-multi-company users.
 - Rework menu groups: Rework User / Rework Manager.
@@ -86,7 +87,9 @@ Example: package `0001` contains 10 units of Lemon A and 0.5 units must become 5
 5. Click **Confirm**.
    - The module creates an Import Lot with no Purchase Order.
    - The Import Lot is restricted to the selected Sale Order.
-   - The Sale Order line receives the Import Lot allocation immediately, before Lemon B exists physically.
+   - If the Rework covers only part of the selected Sale Order line, that quantity is split automatically.
+   - The split Sale Order line receives the Import Lot allocation immediately, before Lemon B exists physically.
+   - The remaining quantity stays on the original line and can be supplied from normal stock or its existing Import Lot.
 6. Click **Process Rework**.
    - A stock move consumes 0.5 Lemon A from package `0001` into the Production location.
    - A second stock move produces 5 Lemon B back into package `0001`.

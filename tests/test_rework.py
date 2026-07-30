@@ -225,8 +225,40 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(rework.state, 'confirmed')
         self.assertFalse(rework.result_package_id)
 
-    def test_result_must_cover_selected_sale_line(self):
+    def test_partial_result_splits_sale_line_automatically(self):
         rework, _sale, _sale_line = self._create_rework(destination_qty=6.0, sale_qty=7.0)
 
-        with self.assertRaises(UserError), self.cr.savepoint():
-            rework.action_confirm()
+        original_line = rework.sale_line_id
+        rework.action_confirm()
+
+        self.assertEqual(original_line.product_uom_qty, 1.0)
+        self.assertNotEqual(rework.sale_line_id, original_line)
+        self.assertEqual(rework.sale_line_id.product_uom_qty, 6.0)
+        self.assertEqual(rework.sale_line_id.import_lot_id, rework.import_lot_id)
+        self.assertFalse(original_line.import_lot_id)
+        self.assertEqual(sum(rework.sale_order_id.order_line.mapped('product_uom_qty')), 7.0)
+
+    def test_partial_result_splits_stock_moves_on_confirmed_sale(self):
+        rework, sale, original_line = self._create_rework(
+            destination_qty=2.0,
+            sale_qty=22.0,
+        )
+        sale.action_confirm()
+
+        rework.action_confirm()
+
+        original_moves = original_line.move_ids.filtered(
+            lambda move: move.state not in ('done', 'cancel')
+        )
+        rework_moves = rework.sale_line_id.move_ids.filtered(
+            lambda move: move.state not in ('done', 'cancel')
+        )
+        self.assertEqual(original_line.product_uom_qty, 20.0)
+        self.assertEqual(rework.sale_line_id.product_uom_qty, 2.0)
+        self.assertEqual(sum(original_moves.mapped('product_uom_qty')), 20.0)
+        self.assertEqual(sum(rework_moves.mapped('product_uom_qty')), 2.0)
+        self.assertEqual(rework.sale_line_id.import_lot_id, rework.import_lot_id)
+        self.assertEqual(
+            rework_moves.planned_package_id,
+            rework.sale_line_id.planned_package_id,
+        )
