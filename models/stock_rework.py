@@ -168,6 +168,28 @@ class StockReworkOrder(models.Model):
         ),
     ]
 
+    @api.model_create_multi
+    def create(self, vals_list):
+        Package = self.env['stock.quant.package']
+        for vals in vals_list:
+            if vals.get('source_package_id'):
+                package_location = Package.browse(vals['source_package_id']).location_id
+                if package_location:
+                    vals['source_location_id'] = package_location.id
+                    vals['destination_location_id'] = package_location.id
+        return super().create(vals_list)
+
+    def write(self, vals):
+        if vals.get('source_package_id'):
+            vals = dict(vals)
+            package_location = self.env['stock.quant.package'].browse(
+                vals['source_package_id']
+            ).location_id
+            if package_location:
+                vals['source_location_id'] = package_location.id
+                vals['destination_location_id'] = package_location.id
+        return super().write(vals)
+
     @api.depends('source_package_id')
     def _compute_source_product_domain_ids(self):
         for rework in self:

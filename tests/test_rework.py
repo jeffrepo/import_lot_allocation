@@ -59,20 +59,36 @@ class TestStockRework(common.TransactionCase):
         })
         return sale, line
 
-    def _create_rework(self, source_qty=7.0, destination_qty=7.0, sale_qty=7.0):
+    def _create_rework(
+        self,
+        source_qty=7.0,
+        destination_qty=7.0,
+        sale_qty=7.0,
+        include_locations=True,
+    ):
         sale, sale_line = self._create_sale_line(sale_qty)
-        rework = self.env['stock.rework.order'].create({
+        values = {
             'source_package_id': self.source_package.id,
             'source_product_id': self.product_a.id,
-            'source_location_id': self.stock_location.id,
             'source_qty': source_qty,
             'destination_product_id': self.product_b.id,
-            'destination_location_id': self.stock_location.id,
             'destination_qty': destination_qty,
             'sale_order_id': sale.id,
             'sale_line_id': sale_line.id,
-        })
+        }
+        if include_locations:
+            values.update({
+                'source_location_id': self.stock_location.id,
+                'destination_location_id': self.stock_location.id,
+            })
+        rework = self.env['stock.rework.order'].create(values)
         return rework, sale, sale_line
+
+    def test_create_persists_locations_from_readonly_package_field(self):
+        rework, _sale, _sale_line = self._create_rework(include_locations=False)
+
+        self.assertEqual(rework.source_location_id, self.stock_location)
+        self.assertEqual(rework.destination_location_id, self.stock_location)
 
     def test_confirm_reserves_rework_output_without_purchase(self):
         rework, sale, sale_line = self._create_rework()

@@ -66,7 +66,7 @@
                         </group>
                         <group string="Produce in Same Package">
                             <field name="destination_product_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="destination_location_id" readonly="1"/>
+                            <field name="destination_location_id" readonly="1" force_save="1"/>
                             <field name="destination_qty" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
                             <field name="destination_uom_id" readonly="1"/>
                             <field name="result_package_id" readonly="1"/>
