@@ -32,6 +32,7 @@ class StockReworkOrder(models.Model):
         check_company=True,
         tracking=True,
         domain="[('location_id.usage', '=', 'internal'), '|', ('company_id', '=', False), ('company_id', '=', company_id)]",
+        help='Physical package already received in stock. The Rework result remains in this same package.',
     )
     source_product_domain_ids = fields.Many2many(
         'product.product',
@@ -91,6 +92,7 @@ class StockReworkOrder(models.Model):
         check_company=True,
         tracking=True,
         domain="[('usage', '=', 'internal'), '|', ('company_id', '=', False), ('company_id', '=', company_id)]",
+        help='Must be the source location because the result stays in the same physical package.',
     )
     destination_qty = fields.Float(
         string='Quantity to Produce',
@@ -124,11 +126,12 @@ class StockReworkOrder(models.Model):
     )
     result_package_id = fields.Many2one(
         'stock.quant.package',
-        string='Result Package',
+        string='Reworked Package',
         copy=False,
         readonly=True,
         ondelete='restrict',
         index=True,
+        help='The original source package after the converted product has been added to it.',
     )
     consume_move_id = fields.Many2one(
         'stock.move',
@@ -195,8 +198,7 @@ class StockReworkOrder(models.Model):
                 lambda quant: quant.location_id.usage == 'internal' and quant.quantity > 0
             ).mapped('product_id')
             rework.source_product_id = products if len(products) == 1 else False
-            if not rework.destination_location_id:
-                rework.destination_location_id = rework.source_package_id.location_id
+            rework.destination_location_id = rework.source_package_id.location_id
 
     @api.onchange('source_qty')
     def _onchange_source_qty(self):
@@ -228,6 +230,19 @@ class StockReworkOrder(models.Model):
             if rework.source_product_id == rework.destination_product_id:
                 raise ValidationError(_('The source product and result product must be different.'))
 
+    @api.constrains('source_location_id', 'destination_location_id')
+    def _check_same_package_location(self):
+        for rework in self:
+            if (
+                rework.source_location_id
+                and rework.destination_location_id
+                and rework.source_location_id != rework.destination_location_id
+            ):
+                raise ValidationError(_(
+                    'The result location must match the source location because Rework keeps '
+                    'the consumed and generated products in the same physical package.'
+                ))
+
     @api.constrains('sale_order_id', 'sale_line_id', 'destination_product_id')
     def _check_sale_line(self):
         for rework in self:
@@ -245,6 +260,14 @@ class StockReworkOrder(models.Model):
                     'This Rework flow currently requires source and result products with No Tracking. '
                     'Package tracking is supported; serial/lot tracking is not.'
                 ))
+            if rework.source_package_id.location_id != rework.source_location_id:
+                raise UserError(_(
+                    'Source package %(package)s is no longer located in %(location)s. '
+                    'Select the package again before processing the Rework.'
+                ) % {
+                    'package': rework.source_package_id.name,
+                    'location': rework.source_location_id.display_name,
+                })
             if rework.sale_line_id.import_lot_id and rework.sale_line_id.import_lot_id != rework.import_lot_id:
                 raise UserError(_(
                     'Sale Order line %(line)s already uses Import Lot %(lot)s. Clear it before confirming this Rework.'
@@ -392,11 +415,10 @@ class StockReworkOrder(models.Model):
             if not production_location:
                 raise UserError(_('No production location is configured for the company.'))
 
-            result_package = self.env['stock.quant.package'].create({
-                'name': rework.name,
-                'package_type_id': rework.source_package_id.package_type_id.id or False,
-                'rework_order_id': rework.id,
-            })
+            # Rework is a partial conversion inside one physical package. The source
+            # quantity is consumed and the generated product is put back into that
+            # same package; no second package is created.
+            result_package = rework.source_package_id
             consume_move = rework._create_done_move(
                 rework.source_product_id,
                 rework.source_qty,
@@ -468,7 +490,7 @@ class StockReworkOrder(models.Model):
         self.ensure_one()
         return {
             'type': 'ir.actions.act_window',
-            'name': _('Rework Result Package'),
+            'name': _('Reworked Package'),
             'res_model': 'stock.quant.package',
             'view_mode': 'form',
             'res_id': self.result_package_id.id,

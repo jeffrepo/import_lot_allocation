@@ -12,10 +12,21 @@ class TestStockRework(common.TransactionCase):
         cls.customer = cls.env['res.partner'].create({
             'name': 'Rework Customer',
         })
+        cls.rework_uom_category = cls.env['uom.category'].create({
+            'name': 'Fractional Rework Units',
+        })
+        cls.rework_uom = cls.env['uom.uom'].create({
+            'name': 'Fractional Rework Unit',
+            'category_id': cls.rework_uom_category.id,
+            'uom_type': 'reference',
+            'rounding': 0.01,
+        })
         cls.product_a = cls.env['product.product'].create({
             'name': 'Lemon A',
             'type': 'product',
             'standard_price': 1.0,
+            'uom_id': cls.rework_uom.id,
+            'uom_po_id': cls.rework_uom.id,
         })
         cls.product_b = cls.env['product.product'].create({
             'name': 'Lemon B',
@@ -77,15 +88,17 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(sale_line.import_lot_allocation_ids.allocated_qty, 7.0)
         self.assertFalse(sale_line.planned_package_id.source_package_id)
 
-    def test_process_consumes_a_and_produces_b_in_result_package(self):
+    def test_process_consumes_a_and_produces_b_in_same_package(self):
         rework, _sale, sale_line = self._create_rework()
+        package_count = self.env['stock.quant.package'].search_count([])
 
         rework.action_process()
 
         self.assertEqual(rework.state, 'done')
         self.assertEqual(rework.consume_move_id.state, 'done')
         self.assertEqual(rework.produce_move_id.state, 'done')
-        self.assertEqual(rework.result_package_id.rework_order_id, rework)
+        self.assertEqual(rework.result_package_id, self.source_package)
+        self.assertEqual(self.env['stock.quant.package'].search_count([]), package_count)
         self.assertEqual(rework.import_lot_id.state, 'received')
         self.assertEqual(rework.import_lot_id.source_package_id, rework.result_package_id)
         self.assertEqual(rework.import_lot_id.line_ids.received_qty, 7.0)
@@ -105,6 +118,43 @@ class TestStockRework(common.TransactionCase):
         )
         self.assertEqual(source_a, 3.0)
         self.assertEqual(result_b, 7.0)
+
+    def test_partial_quantity_is_converted_inside_same_package(self):
+        rework, _sale, _sale_line = self._create_rework(
+            source_qty=0.5,
+            destination_qty=5.0,
+            sale_qty=5.0,
+        )
+
+        rework.action_process()
+
+        remaining_a = self.env['stock.quant']._get_available_quantity(
+            self.product_a,
+            self.stock_location,
+            package_id=self.source_package,
+            strict=True,
+        )
+        generated_b = self.env['stock.quant']._get_available_quantity(
+            self.product_b,
+            self.stock_location,
+            package_id=self.source_package,
+            strict=True,
+        )
+        self.assertEqual(rework.result_package_id, self.source_package)
+        self.assertEqual(remaining_a, 9.5)
+        self.assertEqual(generated_b, 5.0)
+
+    def test_result_location_must_match_source_package_location(self):
+        other_location = self.env['stock.location'].create({
+            'name': 'Other Rework Location',
+            'usage': 'internal',
+            'location_id': self.stock_location.location_id.id,
+            'company_id': self.env.company.id,
+        })
+
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            rework, _sale, _sale_line = self._create_rework()
+            rework.destination_location_id = other_location
 
     def test_rework_import_lot_is_restricted_to_selected_sale(self):
         rework, _sale, _sale_line = self._create_rework()

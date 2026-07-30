@@ -40,7 +40,7 @@
                         <button name="action_view_result_package" type="object" class="oe_stat_button" icon="fa-cube"
                                 attrs="{'invisible': [('result_package_id', '=', False)]}">
                             <div class="o_field_widget o_stat_info">
-                                <span class="o_stat_text">Result Package</span>
+                                <span class="o_stat_text">Reworked Package</span>
                             </div>
                         </button>
                         <button name="action_view_moves" type="object" class="oe_stat_button" icon="fa-exchange"
@@ -64,9 +64,9 @@
                             <field name="source_qty" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
                             <field name="source_uom_id" readonly="1"/>
                         </group>
-                        <group string="Produce Result">
+                        <group string="Produce in Same Package">
                             <field name="destination_product_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="destination_location_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                            <field name="destination_location_id" readonly="1"/>
                             <field name="destination_qty" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
                             <field name="destination_uom_id" readonly="1"/>
                             <field name="result_package_id" readonly="1"/>

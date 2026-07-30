@@ -14,7 +14,7 @@ This module adds an Import Lot flow for purchase/sale allocation, stock Rework, 
 - Sale Order lines select an existing Import Lot; the delivery plan is created automatically.
 - A physical package is created only when the outgoing transfer is completed.
 - Every partial delivery/backorder creates a different physical package.
-- Rework Orders consume product A from a physical package and produce product B in a new package.
+- Rework Orders consume all or part of product A and add product B to the same physical package.
 - Rework output can be reserved for a specific Sale Order without purchasing product B.
 - Import Lot line changes synchronize back to the Purchase Order lines when the PO is not done/cancelled.
 - `company_id` view validation fix for non-multi-company users.
@@ -28,7 +28,7 @@ The implementation now uses `stock.quant.package` as the physical grouping refer
 - Incoming package = physical grouping created when an Import Lot receipt is validated.
 - Planned package = internal non-physical delivery grouping created automatically from the selected Import Lot.
 - Physical delivery package = `stock.quant.package` created when the outgoing stock move is done.
-- Rework result package = physical source package containing the converted product.
+- Reworked package = the original physical source package, now containing the remaining source product and the converted product.
 - Products should be configured with **No Tracking** if the customer wants everything by package instead of `stock.lot`.
 
 If a product is configured with tracking by lots/serial numbers, Odoo standard will still require `stock.lot` during receipt/delivery.
@@ -77,23 +77,29 @@ Outgoing packages have two separate stages so users can adjust Sale Order quanti
 
 Rework Orders are available from **Rework → Rework Orders**.
 
-Example: package `0001` contains 10 units of Lemon A and 7 units must become Lemon B.
+Example: package `0001` contains 10 units of Lemon A and 0.5 units must become 5 units of Lemon B.
 
 1. Create a Rework Order.
-2. Select source package `0001`, source product Lemon A, and quantity 7.
-3. Select result product Lemon B and result quantity 7.
+2. Select source package `0001`, source product Lemon A, and quantity to consume `0.5`.
+3. Select result product Lemon B and quantity to generate `5`.
 4. Select the Sale Order and its Lemon B line.
 5. Click **Confirm**.
    - The module creates an Import Lot with no Purchase Order.
    - The Import Lot is restricted to the selected Sale Order.
    - The Sale Order line receives the Import Lot allocation immediately, before Lemon B exists physically.
 6. Click **Process Rework**.
-   - A stock move consumes 7 Lemon A from package `0001` into the Production location.
-   - A second stock move produces 7 Lemon B into a new package named with the Rework reference.
-   - Package `0001` keeps 3 Lemon A.
-   - The Rework Import Lot becomes received and its internal delivery plan points to the result package.
+   - A stock move consumes 0.5 Lemon A from package `0001` into the Production location.
+   - A second stock move produces 5 Lemon B back into package `0001`.
+   - Package `0001` keeps 9.5 Lemon A and now also contains 5 Lemon B.
+   - No additional physical package is created.
+   - The Rework Import Lot becomes received and its internal delivery plan points to package `0001`.
 7. Validate the Sale Order delivery.
-   - The delivery consumes Lemon B specifically from the Rework result package.
+   - The delivery consumes Lemon B specifically from the original, reworked package.
    - The final customer package is still created only when the delivery is validated.
 
-The simple Rework flow supports products configured with **No Tracking**. Products tracked by serial or stock lot require a separate lot/serial assignment flow.
+The source product UoM must allow the desired decimal precision when only part of one unit is consumed
+(for example, a rounding of `0.01`). The simple Rework flow supports products configured with **No Tracking**.
+Products tracked by serial or stock lot require a separate lot/serial assignment flow.
+
+This lightweight flow records auditable stock consumption and production moves but does not calculate the
+result product cost from the consumed product. The result product therefore uses its configured inventory cost.
