@@ -233,6 +233,7 @@ class TestStockRework(common.TransactionCase):
 
         self.assertEqual(original_line.product_uom_qty, 1.0)
         self.assertNotEqual(rework.sale_line_id, original_line)
+        self.assertEqual(rework.sale_line_id.order_id, rework.sale_order_id)
         self.assertEqual(rework.sale_line_id.product_uom_qty, 6.0)
         self.assertEqual(rework.sale_line_id.import_lot_id, rework.import_lot_id)
         self.assertFalse(original_line.import_lot_id)

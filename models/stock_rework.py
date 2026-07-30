@@ -340,6 +340,8 @@ class StockReworkOrder(models.Model):
         remaining_qty = sale_line.product_uom_qty - rework_sale_qty
         sale_line.write({'product_uom_qty': remaining_qty})
         rework_line = sale_line.copy(default={
+            # sale.order.line.order_id is required and copy=False in Odoo.
+            'order_id': sale_line.order_id.id,
             'sequence': sale_line.sequence + 1,
             'product_uom_qty': rework_sale_qty,
             'import_lot_id': False,
