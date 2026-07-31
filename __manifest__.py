@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Import Lot Allocation',
-    'version': '16.0.6.0.0',
+    'version': '16.0.6.0.1',
     'summary': 'Commercial import allocation, stock rework, and planned delivery packages',
     'description': '''
 Import Lot Allocation
