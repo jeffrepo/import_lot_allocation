@@ -154,3 +154,33 @@ class TestPickingOrderSync(common.TransactionCase):
         self.assertTrue(original_line.exists())
         self.assertFalse(added_line.exists())
         self.assertFalse(added_import_line.exists())
+
+    def test_purchase_receipt_uses_po_number_as_package(self):
+        purchase = self.env['purchase.order'].create({
+            'partner_id': self.vendor.id,
+        })
+        self.env['purchase.order.line'].create({
+            'order_id': purchase.id,
+            'product_id': self.original_product.id,
+            'product_qty': 2.0,
+            'product_uom': self.original_product.uom_id.id,
+            'price_unit': self.original_product.standard_price,
+            'date_planned': fields.Datetime.now(),
+        })
+        purchase.button_confirm()
+        action = purchase.action_create_import_lot()
+        import_lot = self.env['import.lot'].browse(action['res_id'])
+        expected = import_lot.expected_package_id
+
+        self.assertEqual(expected.name, purchase.name)
+        self.assertFalse(expected.physical_package_id)
+
+        receipt = purchase.picking_ids
+        receipt.move_ids.write({'quantity_done': 2.0})
+        receipt.with_context(skip_backorder=True).button_validate()
+
+        package = expected.physical_package_id
+        self.assertTrue(package)
+        self.assertEqual(package.name, purchase.name)
+        self.assertEqual(import_lot.source_package_id, package)
+        self.assertEqual(receipt.move_line_ids.result_package_id, package)

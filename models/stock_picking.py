@@ -420,6 +420,10 @@ class StockPicking(models.Model):
         return res
 
     def _get_or_create_import_lot_package(self, import_lot, company):
+        if import_lot.purchase_order_id:
+            expected = import_lot._ensure_expected_package()
+            return expected._get_or_create_physical_package()
+
         Package = self.env['stock.quant.package']
         package = Package.search([
             ('name', '=', import_lot.name),
@@ -441,9 +445,13 @@ class StockPicking(models.Model):
         return qty
 
     def _assign_import_lot_package_on_receipt(self):
-        """Use the Import Lot reference as the physical package on receipts."""
+        """Force receipts into the package reserved from their Purchase Order."""
         MoveLine = self.env['stock.move.line']
         for picking in self.filtered(lambda p: p.picking_type_code == 'incoming' and p.import_lot_id):
+            if picking.import_lot_id.purchase_order_id:
+                expected = picking.import_lot_id._ensure_expected_package()
+                if expected.expected_location_id != picking.location_dest_id:
+                    expected.expected_location_id = picking.location_dest_id.id
             package = self._get_or_create_import_lot_package(picking.import_lot_id, picking.company_id)
             for move in picking.move_ids_without_package.filtered(
                 lambda record: record.product_id and record.product_id.detailed_type == 'product'
@@ -471,7 +479,7 @@ class StockPicking(models.Model):
                     if not move_line.qty_done:
                         qty_line = getattr(move_line, 'reserved_uom_qty', 0.0) or remaining_qty
                         move_line.qty_done = qty_line
-                    if not move_line.result_package_id:
+                    if move_line.result_package_id != package:
                         move_line.result_package_id = package.id
                     remaining_qty -= move_line.qty_done
 
@@ -653,7 +661,10 @@ class StockPicking(models.Model):
                     continue
                 source_package = move.planned_package_id.source_package_id
                 if (
-                    move.planned_package_id.import_lot_id.rework_order_ids
+                    (
+                        move.planned_package_id.import_lot_id.rework_order_ids
+                        or move.planned_package_id.import_lot_id.rework_line_ids
+                    )
                     and not source_package
                 ):
                     errors.append(_(
@@ -690,8 +701,18 @@ class StockPicking(models.Model):
     def _update_import_lot_after_receipt(self):
         for picking in self.filtered(lambda p: p.picking_type_code == 'incoming' and p.import_lot_id):
             lot = picking.import_lot_id
+            package = self._get_or_create_import_lot_package(lot, picking.company_id)
+            if lot.source_package_id != package:
+                lot.source_package_id = package.id
+            plans = self.env['stock.package.plan'].search([
+                ('import_lot_id', '=', lot.id),
+            ])
+            plans.write({'source_package_id': package.id})
             if lot.state not in ('closed', 'cancelled'):
                 if all(line.received_qty >= line.expected_qty for line in lot.line_ids):
                     lot.state = 'received'
                 elif any(line.received_qty > 0 for line in lot.line_ids):
                     lot.state = 'partially_received'
+            plans.mapped('move_ids').filtered(
+                lambda move: move.state in ('confirmed', 'waiting', 'partially_available')
+            )._action_assign()

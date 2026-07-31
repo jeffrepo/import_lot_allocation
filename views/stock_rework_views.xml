@@ -6,13 +6,9 @@
         <field name="arch" type="xml">
             <tree string="Rework Orders" decoration-success="state == 'done'" decoration-muted="state == 'cancelled'">
                 <field name="name"/>
-                <field name="source_package_id"/>
-                <field name="source_product_id"/>
-                <field name="source_qty"/>
-                <field name="destination_product_id"/>
-                <field name="destination_qty"/>
                 <field name="sale_order_id"/>
-                <field name="result_package_id"/>
+                <field name="line_count"/>
+                <field name="result_package_count"/>
                 <field name="state"/>
             </tree>
         </field>
@@ -31,60 +27,116 @@
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box">
-                        <button name="action_view_import_lot" type="object" class="oe_stat_button" icon="fa-tags"
-                                attrs="{'invisible': [('import_lot_id', '=', False)]}">
-                            <div class="o_field_widget o_stat_info">
-                                <span class="o_stat_text">Import Lot</span>
-                            </div>
+                        <button name="action_view_import_lots" type="object" class="oe_stat_button" icon="fa-tags"
+                                attrs="{'invisible': [('output_import_lot_count', '=', 0)]}">
+                            <field name="output_import_lot_count" widget="statinfo" string="Result Lots"/>
                         </button>
-                        <button name="action_view_result_package" type="object" class="oe_stat_button" icon="fa-cube"
-                                attrs="{'invisible': [('result_package_id', '=', False)]}">
-                            <div class="o_field_widget o_stat_info">
-                                <span class="o_stat_text">Reworked Package</span>
-                            </div>
+                        <button name="action_view_result_packages" type="object" class="oe_stat_button" icon="fa-cubes"
+                                attrs="{'invisible': [('result_package_count', '=', 0)]}">
+                            <field name="result_package_count" widget="statinfo" string="Packages"/>
                         </button>
                         <button name="action_view_moves" type="object" class="oe_stat_button" icon="fa-exchange"
-                                attrs="{'invisible': [('consume_move_id', '=', False)]}">
-                            <div class="o_field_widget o_stat_info">
-                                <span class="o_stat_text">Stock Moves</span>
-                            </div>
+                                attrs="{'invisible': [('stock_move_count', '=', 0)]}">
+                            <field name="stock_move_count" widget="statinfo" string="Stock Moves"/>
                         </button>
                     </div>
                     <div class="oe_title">
                         <h1><field name="name" readonly="1"/></h1>
                     </div>
-                    <field name="company_id" invisible="1"/>
-                    <field name="source_product_domain_ids" invisible="1"/>
                     <group>
-                        <group string="Consume from Package">
-                            <field name="source_package_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="source_product_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="source_location_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="source_available_qty" readonly="1"/>
-                            <field name="source_qty" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="source_uom_id" readonly="1"/>
-                        </group>
-                        <group string="Produce in Same Package">
-                            <field name="destination_product_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="destination_location_id" readonly="1" force_save="1"/>
-                            <field name="destination_qty" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="destination_uom_id" readonly="1"/>
-                            <field name="result_package_id" readonly="1"/>
-                        </group>
-                    </group>
-                    <group string="Sales Allocation">
                         <group>
                             <field name="sale_order_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
-                            <field name="sale_line_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
                         </group>
                         <group>
-                            <field name="import_lot_id" readonly="1"/>
-                            <field name="consume_move_id" invisible="1"/>
-                            <field name="produce_move_id" invisible="1"/>
+                            <field name="company_id" groups="base.group_multi_company"
+                                   attrs="{'readonly': [('state', '!=', 'draft')]}"/>
                         </group>
                     </group>
+
+                    <field name="legacy_data_pending" invisible="1"/>
+                    <group string="Legacy Conversion Pending Migration"
+                           attrs="{'invisible': [('legacy_data_pending', '=', False)]}">
+                        <group>
+                            <field name="source_package_id" readonly="1"/>
+                            <field name="source_product_id" readonly="1"/>
+                            <field name="source_qty" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="destination_product_id" readonly="1"/>
+                            <field name="destination_qty" readonly="1"/>
+                            <field name="sale_line_id" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Conversions">
+                            <field name="line_ids" attrs="{'readonly': [('state', '!=', 'draft')]}">
+                                <tree editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="company_id" invisible="1"/>
+                                    <field name="sale_order_id" invisible="1"/>
+                                    <field name="source_product_domain_ids" invisible="1"/>
+                                    <field name="source_import_lot_id"/>
+                                    <field name="source_expected_package_id" readonly="1"/>
+                                    <field name="source_package_id" force_save="1" optional="show"
+                                           attrs="{'readonly': [('source_import_lot_id', '!=', False)]}"/>
+                                    <field name="source_product_id"/>
+                                    <field name="source_qty"/>
+                                    <field name="source_uom_id" readonly="1"/>
+                                    <field name="source_available_qty" readonly="1" optional="show"/>
+                                    <field name="destination_product_id"/>
+                                    <field name="destination_qty"/>
+                                    <field name="destination_uom_id" readonly="1"/>
+                                    <field name="sale_line_id"/>
+                                    <field name="result_package_id" readonly="1" optional="hide"/>
+                                    <field name="note" optional="hide"/>
+                                </tree>
+                                <form string="Rework Conversion">
+                                    <group>
+                                        <group string="Consume from Purchase Package">
+                                            <field name="company_id" invisible="1"/>
+                                            <field name="sale_order_id" invisible="1"/>
+                                            <field name="source_product_domain_ids" invisible="1"/>
+                                            <field name="source_import_lot_id"/>
+                                            <field name="source_expected_package_id" readonly="1"/>
+                                            <field name="source_package_id" force_save="1"
+                                                   attrs="{'readonly': [('source_import_lot_id', '!=', False)]}"/>
+                                            <field name="source_product_id"/>
+                                            <field name="source_location_id" readonly="1" force_save="1"/>
+                                            <field name="source_available_qty" readonly="1"/>
+                                            <field name="source_qty"/>
+                                            <field name="source_uom_id" readonly="1"/>
+                                        </group>
+                                        <group string="Produce in the Same Package">
+                                            <field name="destination_product_id"/>
+                                            <field name="destination_location_id" readonly="1" force_save="1"/>
+                                            <field name="destination_qty"/>
+                                            <field name="destination_uom_id" readonly="1"/>
+                                            <field name="sale_line_id"/>
+                                            <field name="result_package_id" readonly="1"/>
+                                        </group>
+                                    </group>
+                                    <group>
+                                        <field name="note" placeholder="Conversion instructions..."/>
+                                        <field name="output_import_lot_id" readonly="1"/>
+                                    </group>
+                                </form>
+                            </field>
+                        </page>
+                        <page string="Result Import Lots" attrs="{'invisible': [('output_import_lot_count', '=', 0)]}">
+                            <field name="output_import_lot_ids" readonly="1">
+                                <tree create="0" delete="0">
+                                    <field name="name"/>
+                                    <field name="source_package_id"/>
+                                    <field name="expected_qty"/>
+                                    <field name="received_qty"/>
+                                    <field name="state"/>
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
                     <group>
-                        <field name="note" placeholder="Rework instructions or notes..."
+                        <field name="note" placeholder="General Rework instructions or notes..."
                                attrs="{'readonly': [('state', '=', 'done')]}"/>
                     </group>
                 </sheet>
@@ -103,16 +155,12 @@
         <field name="arch" type="xml">
             <search string="Rework Orders">
                 <field name="name"/>
-                <field name="source_package_id"/>
-                <field name="source_product_id"/>
-                <field name="destination_product_id"/>
                 <field name="sale_order_id"/>
+                <field name="line_ids"/>
                 <filter name="open_rework" string="Open" domain="[('state', 'in', ('draft', 'confirmed'))]"/>
                 <group expand="0" string="Group By">
                     <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
                     <filter name="group_sale" string="Sale Order" context="{'group_by': 'sale_order_id'}"/>
-                    <filter name="group_source_product" string="Source Product" context="{'group_by': 'source_product_id'}"/>
-                    <filter name="group_result_product" string="Result Product" context="{'group_by': 'destination_product_id'}"/>
                 </group>
             </search>
         </field>

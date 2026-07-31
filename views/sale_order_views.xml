@@ -98,6 +98,10 @@
                 <button name="action_view_import_lot_allocations" type="object" class="oe_stat_button" icon="fa-tags">
                     <field name="import_lot_allocation_count" widget="statinfo" string="Import Lot Allocations"/>
                 </button>
+                <button name="action_open_rework" type="object" class="oe_stat_button" icon="fa-refresh"
+                        groups="import_lot_allocation.group_rework_user">
+                    <field name="rework_order_count" widget="statinfo" string="Rework"/>
+                </button>
             </xpath>
             <xpath expr="//field[@name='order_line']/tree/field[@name='product_uom_qty']" position="after">
                 <field name="import_lot_id"

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_stock_expected_package_tree" model="ir.ui.view">
+        <field name="name">stock.expected.package.tree</field>
+        <field name="model">stock.expected.package</field>
+        <field name="arch" type="xml">
+            <tree string="Future Packages" decoration-success="state == 'received'">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <field name="expected_location_id"/>
+                <field name="physical_package_id"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_stock_expected_package_form" model="ir.ui.view">
+        <field name="name">stock.expected.package.form</field>
+        <field name="model">stock.expected.package</field>
+        <field name="arch" type="xml">
+            <form string="Future Package">
+                <header>
+                    <button name="action_create_physical_package" type="object"
+                            string="Create Physical Package" states="expected" class="btn-primary"/>
+                    <field name="state" widget="statusbar" statusbar_visible="expected,created,received"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_physical_package" type="object"
+                                class="oe_stat_button" icon="fa-cube"
+                                attrs="{'invisible': [('physical_package_id', '=', False)]}">
+                            <div class="o_field_widget o_stat_info">
+                                <span class="o_stat_text">Physical Package</span>
+                            </div>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="purchase_order_id" readonly="1"/>
+                            <field name="expected_location_id"/>
+                        </group>
+                        <group>
+                            <field name="physical_package_id" readonly="1"/>
+                            <field name="company_id" groups="base.group_multi_company" readonly="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Import Lots">
+                            <field name="import_lot_ids" readonly="1">
+                                <tree create="0" delete="0">
+                                    <field name="name"/>
+                                    <field name="expected_date"/>
+                                    <field name="expected_qty"/>
+                                    <field name="received_qty"/>
+                                    <field name="state"/>
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_stock_expected_package_search" model="ir.ui.view">
+        <field name="name">stock.expected.package.search</field>
+        <field name="model">stock.expected.package</field>
+        <field name="arch" type="xml">
+            <search string="Future Packages">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <filter name="not_received" string="Not Received" domain="[('state', '!=', 'received')]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_stock_expected_package" model="ir.actions.act_window">
+        <field name="name">Future Packages</field>
+        <field name="res_model">stock.expected.package</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_stock_expected_package_search"/>
+        <field name="context">{'search_default_not_received': 1}</field>
+    </record>
+
+    <menuitem id="menu_stock_expected_package" name="Future Packages"
+              parent="menu_import_lot_root" action="action_stock_expected_package"
+              sequence="8" groups="import_lot_allocation.group_rework_user"/>
+</odoo>

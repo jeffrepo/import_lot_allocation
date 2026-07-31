@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 {
     'name': 'Import Lot Allocation',
-    'version': '16.0.5.0.0',
+    'version': '16.0.6.0.0',
     'summary': 'Commercial import allocation, stock rework, and planned delivery packages',
     'description': '''
 Import Lot Allocation
@@ -13,8 +13,8 @@ Important: Import Lots are commercial/supply references. Incoming receipts can c
 while Sale Order lines select an existing Import Lot. The internal delivery plan is created automatically,
 and the physical stock.quant.package is created only when the delivery is completed.
 
-Rework Orders can consume part of one packaged product and produce another product in the same package,
-reserved for a specific Sale Order without requiring a Purchase Order for the result product.
+Future package references reserve the Purchase Order number before receipt, and Rework Orders group
+multiple product conversions for one Sale Order while keeping each result in its purchased source package.
 ''',
     'category': 'Inventory/Inventory',
     'author': 'OpenAI - ChatGPT',
@@ -25,6 +25,7 @@ reserved for a specific Sale Order without requiring a Purchase Order for the re
         'security/ir.model.access.csv',
         'data/ir_sequence.xml',
         'views/import_lot_views.xml',
+        'views/stock_expected_package_views.xml',
         'views/purchase_order_views.xml',
         'views/stock_rework_views.xml',
         'views/sale_order_views.xml',

@@ -9,12 +9,16 @@ This module adds an Import Lot flow for purchase/sale allocation, stock Rework, 
 - Import Lot reference based on PO number: `P00001`, `P00001-L02`, etc.
 - Sale Orders can be confirmed freely.
 - Delivery validation checks Import Lot only at picking validation time.
-- Incoming receipts linked to an Import Lot automatically use/create a package named as the Import Lot.
+- A PO reserves one future package reference with exactly the PO number before stock is received.
+- Incoming receipts linked to an Import Lot are forced into that PO-numbered package, even if Odoo already proposed a `PACK...` package.
+- On upgrade, an unambiguous existing receipt package is linked to its PO reference and renamed from `PACK...` to the PO number.
 - Incoming receipt move lines are filled with `qty_done` when empty.
 - Sale Order lines select an existing Import Lot; the delivery plan is created automatically.
 - A physical package is created only when the outgoing transfer is completed.
 - Every partial delivery/backorder creates a different physical package.
-- Rework Orders consume all or part of product A and add product B to the same physical package.
+- One Rework Order belongs to one Sale Order and contains multiple conversion lines.
+- Each line can consume all or part of product A and add product B to the same purchased package.
+- A Rework can select a PO/Import Lot while it is in transit. Confirming creates the empty physical package with the PO number; processing waits for its receipt.
 - Rework output can be reserved for a specific Sale Order without purchasing product B.
 - A partial Rework keeps one Sale Order line and splits only its outgoing stock moves between Rework and normal stock.
 - Products manually added or removed on open receipts/deliveries are synchronized to their Purchase/Sale Orders.
@@ -27,7 +31,8 @@ This module adds an Import Lot flow for purchase/sale allocation, stock Rework, 
 The implementation now uses `stock.quant.package` as the physical grouping reference.
 
 - Import Lot = commercial/supply reference, usually the PO number.
-- Incoming package = physical grouping created when an Import Lot receipt is validated.
+- Future package = transitory reference reserved from a PO, with exactly the PO number.
+- Incoming package = physical grouping created from the future reference on Rework confirmation or receipt validation.
 - Planned package = internal non-physical delivery grouping created automatically from the selected Import Lot.
 - Physical delivery package = `stock.quant.package` created when the outgoing stock move is done.
 - Reworked package = the original physical source package, now containing the remaining source product and the converted product.
@@ -39,15 +44,20 @@ If a product is configured with tracking by lots/serial numbers, Odoo standard w
 
 1. Confirm PO.
 2. Click **Create Import Lot**.
-3. Confirm Import Lot.
-4. Validate incoming receipt.
-   - The module creates/uses package `P00001`.
+3. The module reserves future package `P00001`; no physical package or stock is created yet.
+4. Optionally create and confirm the Sale Order Rework while the PO is still in transit.
+   - Each conversion line selects the source PO/Import Lot.
+   - Confirmation creates the empty physical package `P00001`.
+   - Processing remains blocked until enough source stock has been received.
+5. Validate incoming receipt.
+   - The module creates or reuses package `P00001`.
+   - Any automatically proposed `PACK...` is replaced on the receipt lines by `P00001`.
    - The module assigns `result_package_id` and `qty_done` on receipt lines.
-5. Select the existing **Import Lot** on each applicable Sale Order line.
+6. Select the existing **Import Lot** on each applicable Sale Order line.
    - The module creates the commercial allocation for the ordered quantity.
    - The module creates/reuses one internal plan per Sale Order and Import Lot.
-6. Confirm the Sale Order; the Import Lot's internal plan is copied to its open stock moves.
-7. Validate the delivery.
+7. Confirm the Sale Order; the Import Lot's internal plan is copied to its open stock moves.
+8. Validate the delivery.
    - The module creates a physical package at the final stock operation.
    - The package is assigned through `result_package_id`.
    - A later backorder validation creates another physical package.
@@ -79,25 +89,27 @@ Outgoing packages have two separate stages so users can adjust Sale Order quanti
 
 Rework Orders are available from **Rework → Rework Orders**.
 
-Example: package `0001` contains 10 units of Lemon A and 0.5 units must become 5 units of Lemon B.
+Example: PO `P00001` will receive Lemon A, and part of it must become Lemon B and Lemon C for one Sale Order.
 
-1. Create a Rework Order.
-2. Select source package `0001`, source product Lemon A, and quantity to consume `0.5`.
-3. Select result product Lemon B and quantity to generate `5`.
-4. Select the Sale Order and its Lemon B line.
+1. Open the Sale Order and use its **Rework** smart button. The same active Rework is reused.
+2. Add a conversion line and select the source PO / future package `P00001` even if it is still in transit.
+3. Select source product Lemon A, quantity to consume `0.5`, result product Lemon B, quantity to generate `5`, and the Lemon B Sale Order line.
+4. Add any other product conversions required by the same Sale Order as additional lines.
 5. Click **Confirm**.
-   - The module creates an Import Lot with no Purchase Order.
-   - The Import Lot is restricted to the selected Sale Order.
-   - The selected Sale Order line keeps its original quantity and is not duplicated.
-   - The Rework quantity receives a partial Import Lot allocation immediately, before Lemon B exists physically.
+   - If necessary, the module creates an empty physical package named exactly `P00001`.
+   - Each result line gets its own internal Import Lot without a Purchase Order, restricted to the selected Sale Order.
+   - Every selected Sale Order line keeps its original quantity and is not duplicated.
+   - Rework quantities receive partial allocations immediately, before the result products exist physically.
    - At stock level, only that quantity receives the Rework package plan; the remainder can use normal stock.
-6. Click **Process Rework**.
-   - A stock move consumes 0.5 Lemon A from package `0001` into the Production location.
-   - A second stock move produces 5 Lemon B back into package `0001`.
-   - Package `0001` keeps 9.5 Lemon A and now also contains 5 Lemon B.
+6. Validate the PO receipt. All products are received into package `P00001`.
+7. Click **Process Rework**.
+   - Two auditable stock moves are created for every conversion line.
+   - A stock move consumes 0.5 Lemon A from package `P00001` into the Production location.
+   - A second stock move produces 5 Lemon B back into package `P00001`.
+   - Package `P00001` keeps the unconsumed Lemon A and contains all converted products.
    - No additional physical package is created.
-   - The Rework Import Lot becomes received and its internal delivery plan points to package `0001`.
-7. Validate the Sale Order delivery.
+   - Result Import Lots become received and their internal delivery plans point to package `P00001`.
+8. Validate the Sale Order delivery.
    - The delivery consumes Lemon B specifically from the original, reworked package.
    - The final customer package is still created only when the delivery is validated.
 

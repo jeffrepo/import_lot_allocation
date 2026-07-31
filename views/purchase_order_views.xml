@@ -9,6 +9,10 @@
                 <button name="action_view_import_lots" type="object" class="oe_stat_button" icon="fa-tags">
                     <field name="import_lot_count" widget="statinfo" string="Import Lots"/>
                 </button>
+                <button name="action_view_expected_packages" type="object" class="oe_stat_button" icon="fa-cube"
+                        attrs="{'invisible': [('state', 'not in', ('purchase', 'done'))]}">
+                    <field name="expected_package_count" widget="statinfo" string="Future Package"/>
+                </button>
             </xpath>
             <xpath expr="//header" position="inside">
                 <button name="action_create_import_lot" type="object" string="Create Import Lot" class="btn-secondary" attrs="{'invisible': [('state', 'not in', ('purchase', 'done'))]}"/>

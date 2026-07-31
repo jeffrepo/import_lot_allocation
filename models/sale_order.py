@@ -21,6 +21,16 @@ class SaleOrder(models.Model):
         string='Import Lot Allocations',
         compute='_compute_import_lot_allocation_count',
     )
+    rework_order_ids = fields.One2many(
+        'stock.rework.order',
+        'sale_order_id',
+        string='Rework Orders',
+        copy=False,
+    )
+    rework_order_count = fields.Integer(
+        string='Rework Orders',
+        compute='_compute_rework_order_count',
+    )
 
     def _compute_planned_package_count(self):
         for order in self:
@@ -30,6 +40,12 @@ class SaleOrder(models.Model):
         Allocation = self.env['import.lot.allocation']
         for order in self:
             order.import_lot_allocation_count = Allocation.search_count([('sale_order_id', '=', order.id)])
+
+    def _compute_rework_order_count(self):
+        for order in self:
+            order.rework_order_count = len(order.rework_order_ids.filtered(
+                lambda rework: rework.state != 'cancelled'
+            ))
 
     def action_view_import_lot_allocations(self):
         self.ensure_one()
@@ -52,6 +68,31 @@ class SaleOrder(models.Model):
             'domain': [('sale_order_id', '=', self.id)],
             'context': {'default_sale_order_id': self.id},
         }
+
+    def action_open_rework(self):
+        self.ensure_one()
+        reworks = self.rework_order_ids.filtered(
+            lambda rework: rework.state != 'cancelled'
+        )
+        if not reworks:
+            reworks = self.env['stock.rework.order'].create({
+                'sale_order_id': self.id,
+                'company_id': self.company_id.id,
+            })
+        action = {
+            'type': 'ir.actions.act_window',
+            'name': _('Rework Order'),
+            'res_model': 'stock.rework.order',
+            'view_mode': 'tree,form',
+            'domain': [('id', 'in', reworks.ids)],
+            'context': {
+                'default_sale_order_id': self.id,
+                'default_company_id': self.company_id.id,
+            },
+        }
+        if len(reworks) == 1:
+            action.update({'view_mode': 'form', 'res_id': reworks.id})
+        return action
 
     def action_confirm(self):
         res = super().action_confirm()

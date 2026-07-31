@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from . import stock_expected_package
 from . import import_lot
 from . import purchase_order
 from . import stock_package_plan

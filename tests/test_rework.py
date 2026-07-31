@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from odoo import fields
 from odoo.exceptions import UserError, ValidationError
 from odoo.tests import common, tagged
 
@@ -11,6 +12,10 @@ class TestStockRework(common.TransactionCase):
         super().setUpClass()
         cls.customer = cls.env['res.partner'].create({
             'name': 'Rework Customer',
+        })
+        cls.vendor = cls.env['res.partner'].create({
+            'name': 'Rework Vendor',
+            'supplier_rank': 1,
         })
         cls.rework_uom_category = cls.env['uom.category'].create({
             'name': 'Fractional Rework Units',
@@ -84,6 +89,22 @@ class TestStockRework(common.TransactionCase):
         rework = self.env['stock.rework.order'].create(values)
         return rework, sale, sale_line
 
+    def _create_purchase_import_lot(self, product, quantity=10.0):
+        purchase = self.env['purchase.order'].create({
+            'partner_id': self.vendor.id,
+        })
+        self.env['purchase.order.line'].create({
+            'order_id': purchase.id,
+            'product_id': product.id,
+            'product_qty': quantity,
+            'product_uom': product.uom_po_id.id,
+            'price_unit': product.standard_price,
+            'date_planned': fields.Datetime.now(),
+        })
+        purchase.button_confirm()
+        action = purchase.action_create_import_lot()
+        return purchase, self.env['import.lot'].browse(action['res_id'])
+
     def test_create_persists_locations_from_readonly_package_field(self):
         rework, _sale, _sale_line = self._create_rework(include_locations=False)
 
@@ -108,7 +129,7 @@ class TestStockRework(common.TransactionCase):
             lambda record: record.import_lot_id == rework.import_lot_id
         )
         self.assertEqual(len(plan), 1)
-        self.assertFalse(plan.source_package_id)
+        self.assertEqual(plan.source_package_id, self.source_package)
 
     def test_process_consumes_a_and_produces_b_in_same_package(self):
         rework, _sale, sale_line = self._create_rework()
@@ -298,3 +319,104 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(len(sale.order_line), 1)
         self.assertEqual(sum(normal_moves.mapped('product_uom_qty')), 20.0)
         self.assertEqual(sum(rework_moves.mapped('product_uom_qty')), 2.0)
+
+    def test_future_po_package_is_created_on_confirm_and_filled_on_receipt(self):
+        purchase, source_lot = self._create_purchase_import_lot(self.product_a)
+        sale, sale_line = self._create_sale_line(quantity=2.0)
+        rework = self.env['stock.rework.order'].create({
+            'sale_order_id': sale.id,
+            'line_ids': [(0, 0, {
+                'source_import_lot_id': source_lot.id,
+                'source_product_id': self.product_a.id,
+                'source_qty': 2.0,
+                'destination_product_id': self.product_b.id,
+                'destination_qty': 2.0,
+                'sale_line_id': sale_line.id,
+            })],
+        })
+        expected = source_lot.expected_package_id
+
+        self.assertEqual(expected.name, purchase.name)
+        self.assertFalse(expected.physical_package_id)
+        self.assertFalse(rework.line_ids.source_package_id)
+
+        rework.action_confirm()
+
+        package = expected.physical_package_id
+        self.assertTrue(package)
+        self.assertEqual(package.name, purchase.name)
+        self.assertEqual(rework.line_ids.source_package_id, package)
+        with self.assertRaises(UserError), self.cr.savepoint():
+            rework.action_process()
+
+        receipt = purchase.picking_ids
+        receipt.move_ids.write({'quantity_done': 10.0})
+        receipt.with_context(skip_backorder=True).button_validate()
+
+        self.assertEqual(receipt.move_line_ids.result_package_id, package)
+        self.assertEqual(source_lot.source_package_id, package)
+        rework.action_process()
+        self.assertEqual(rework.state, 'done')
+        self.assertEqual(rework.line_ids.result_package_id, package)
+
+    def test_one_sale_rework_supports_multiple_conversion_lines(self):
+        product_c = self.env['product.product'].create({
+            'name': 'Lemon C',
+            'type': 'product',
+            'standard_price': 1.2,
+        })
+        product_d = self.env['product.product'].create({
+            'name': 'Lemon D',
+            'type': 'product',
+            'list_price': 2.4,
+            'standard_price': 1.8,
+        })
+        self.env['stock.quant']._update_available_quantity(
+            product_c,
+            self.stock_location,
+            6.0,
+            package_id=self.source_package,
+        )
+        sale, sale_line_b = self._create_sale_line(quantity=2.0)
+        sale_line_d = self.env['sale.order.line'].create({
+            'order_id': sale.id,
+            'name': product_d.name,
+            'product_id': product_d.id,
+            'product_uom_qty': 3.0,
+            'product_uom': product_d.uom_id.id,
+            'price_unit': product_d.list_price,
+        })
+        rework = self.env['stock.rework.order'].create({
+            'sale_order_id': sale.id,
+            'line_ids': [
+                (0, 0, {
+                    'source_package_id': self.source_package.id,
+                    'source_product_id': self.product_a.id,
+                    'source_qty': 2.0,
+                    'destination_product_id': self.product_b.id,
+                    'destination_qty': 2.0,
+                    'sale_line_id': sale_line_b.id,
+                }),
+                (0, 0, {
+                    'source_package_id': self.source_package.id,
+                    'source_product_id': product_c.id,
+                    'source_qty': 3.0,
+                    'destination_product_id': product_d.id,
+                    'destination_qty': 3.0,
+                    'sale_line_id': sale_line_d.id,
+                }),
+            ],
+        })
+
+        rework.action_confirm()
+
+        self.assertEqual(len(rework.line_ids), 2)
+        self.assertEqual(len(rework.output_import_lot_ids), 2)
+        self.assertEqual(len(rework.line_ids.mapped('allocation_id')), 2)
+        self.assertEqual(sale.action_open_rework()['res_id'], rework.id)
+
+        rework.action_process()
+
+        self.assertEqual(rework.state, 'done')
+        self.assertEqual(rework.result_package_ids, self.source_package)
+        self.assertEqual(len(rework.stock_move_ids), 4)

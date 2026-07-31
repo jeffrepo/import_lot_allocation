@@ -25,6 +25,16 @@ class ImportLot(models.Model):
         index=True,
         tracking=True,
     )
+    expected_package_id = fields.Many2one(
+        'stock.expected.package',
+        string='Future Package',
+        ondelete='restrict',
+        check_company=True,
+        copy=False,
+        index=True,
+        tracking=True,
+        help='Package number reserved from the Purchase Order before the physical package exists.',
+    )
     restricted_sale_order_id = fields.Many2one(
         'sale.order',
         string='Reserved for Sale Order',
@@ -44,12 +54,18 @@ class ImportLot(models.Model):
         readonly=True,
         index=True,
         tracking=True,
-        help='Physical source package produced by Rework for this commercial supply.',
+        help='Physical package that contains this purchased or Rework supply.',
     )
     rework_order_ids = fields.One2many(
         'stock.rework.order',
         'import_lot_id',
-        string='Rework Orders',
+        string='Legacy Rework Orders',
+        readonly=True,
+    )
+    rework_line_ids = fields.One2many(
+        'stock.rework.line',
+        'output_import_lot_id',
+        string='Rework Lines',
         readonly=True,
     )
     partner_id = fields.Many2one(
@@ -146,15 +162,45 @@ class ImportLot(models.Model):
         for lot in self:
             lot.allocation_count = len(lot.allocation_ids)
             lot.picking_count = len(lot.picking_ids)
-            lot.rework_order_count = len(lot.rework_order_ids)
+            lot.rework_order_count = len(
+                lot.rework_order_ids | lot.rework_line_ids.mapped('rework_order_id')
+            )
 
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
-            if vals.get('purchase_order_id') and (not vals.get('name') or vals.get('name') == _('New')):
+            if vals.get('purchase_order_id'):
                 po = self.env['purchase.order'].browse(vals['purchase_order_id'])
-                vals['name'] = self._get_name_from_purchase_order(po)
+                if not vals.get('name') or vals.get('name') == _('New'):
+                    vals['name'] = self._get_name_from_purchase_order(po)
+                if not vals.get('expected_package_id'):
+                    expected_package = self.env[
+                        'stock.expected.package'
+                    ]._get_or_create_for_purchase(po)
+                    vals['expected_package_id'] = expected_package.id
+                    if expected_package.physical_package_id:
+                        vals['source_package_id'] = expected_package.physical_package_id.id
         return super().create(vals_list)
+
+    def write(self, vals):
+        result = super().write(vals)
+        if 'purchase_order_id' in vals:
+            self._ensure_expected_package()
+        return result
+
+    def _ensure_expected_package(self):
+        for lot in self.filtered('purchase_order_id'):
+            expected = self.env['stock.expected.package']._get_or_create_for_purchase(
+                lot.purchase_order_id
+            )
+            values = {}
+            if lot.expected_package_id != expected:
+                values['expected_package_id'] = expected.id
+            if expected.physical_package_id and lot.source_package_id != expected.physical_package_id:
+                values['source_package_id'] = expected.physical_package_id.id
+            if values:
+                super(ImportLot, lot).write(values)
+        return self.mapped('expected_package_id')
 
     def _get_name_from_purchase_order(self, purchase_order):
         """Use the PO number as the main Import Lot reference.
@@ -213,7 +259,11 @@ class ImportLot(models.Model):
             'name': _('Rework Orders'),
             'res_model': 'stock.rework.order',
             'view_mode': 'tree,form',
-            'domain': [('import_lot_id', '=', self.id)],
+            'domain': [
+                '|',
+                ('import_lot_id', '=', self.id),
+                ('line_ids.output_import_lot_id', '=', self.id),
+            ],
         }
 
     def action_sync_purchase_order(self):
