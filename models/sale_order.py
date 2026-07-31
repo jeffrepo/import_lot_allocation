@@ -59,12 +59,23 @@ class SaleOrder(models.Model):
             for line in order.order_line:
                 if line.planned_package_id:
                     line._sync_planned_package_to_stock_moves()
+        reworks = self.env['stock.rework.order'].search([
+            ('sale_order_id', 'in', self.ids),
+            ('state', 'in', ('confirmed', 'done')),
+        ])
+        reworks._sync_partial_plan_to_sale_moves()
         return res
 
 
 class SaleOrderLine(models.Model):
     _inherit = 'sale.order.line'
 
+    created_from_transfer = fields.Boolean(
+        string='Created from Transfer',
+        copy=False,
+        readonly=True,
+        help='Technical flag for lines created after adding a product directly to a delivery.',
+    )
     import_lot_id = fields.Many2one(
         'import.lot',
         string='Import Lot',
@@ -312,6 +323,13 @@ class SaleOrderLine(models.Model):
             if moves:
                 moves.write({'package_id': line.package_id.id if line.package_id else False})
 
+    def _action_launch_stock_rule(self, previous_product_uom_qty=False):
+        if self.env.context.get('skip_order_to_transfer_sync'):
+            return True
+        return super()._action_launch_stock_rule(
+            previous_product_uom_qty=previous_product_uom_qty
+        )
+
     def write(self, vals):
         res = super().write(vals)
         if (
@@ -332,6 +350,7 @@ class SaleOrderLine(models.Model):
         return lines
 
     def unlink(self):
+        self = self.with_context(skip_order_to_transfer_sync=True)
         automatic_plans = self.mapped('planned_package_id').filtered('import_lot_id')
         self.env['import.lot.allocation'].search([
             ('sale_line_id', 'in', self.ids),

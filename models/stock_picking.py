@@ -175,7 +175,238 @@ class StockPicking(models.Model):
         help='Supply/import lot related to this receipt or transfer. This is not the standard Odoo stock lot.',
     )
 
+    def _get_removed_moves_from_commands(self, vals):
+        removed_moves = self.env['stock.move']
+        for field_name in ('move_ids', 'move_ids_without_package'):
+            commands = vals.get(field_name)
+            if not commands:
+                continue
+            for picking in self:
+                current_moves = picking.move_ids
+                for command in commands:
+                    operation = command[0]
+                    if operation in (2, 3) and command[1]:
+                        removed_moves |= self.env['stock.move'].browse(command[1])
+                    elif operation == 5:
+                        removed_moves |= current_moves
+                    elif operation == 6:
+                        kept_ids = set(command[2] or [])
+                        removed_moves |= current_moves.filtered(
+                            lambda move: move.id not in kept_ids
+                        )
+        return removed_moves.exists()
+
+    def _get_order_lines_removed_with_moves(self, removed_moves):
+        sale_lines_to_remove = self.env['sale.order.line']
+        purchase_lines_to_remove = self.env['purchase.order.line']
+
+        for line in removed_moves.mapped('sale_line_id'):
+            remaining_moves = (line.move_ids - removed_moves).filtered(
+                lambda move: move.state != 'cancel'
+            )
+            if remaining_moves:
+                continue
+            manual_allocations = line.import_lot_allocation_ids.filtered(
+                lambda allocation: not allocation.auto_from_sale_line
+                and allocation.state in ('reserved', 'received', 'assigned', 'done')
+            )
+            if manual_allocations:
+                raise UserError(_(
+                    'Cannot remove %(product)s from the delivery because its Sale Order '
+                    'line has a manual Import Lot or Rework allocation.'
+                ) % {'product': line.product_id.display_name})
+            active_invoice_lines = line.invoice_lines.filtered(
+                lambda invoice_line: invoice_line.move_id.state != 'cancel'
+            )
+            precision = line.product_uom.rounding or 0.01
+            if (
+                float_compare(line.qty_delivered, 0.0, precision_rounding=precision) > 0
+                or float_compare(line.qty_invoiced, 0.0, precision_rounding=precision) > 0
+                or active_invoice_lines
+            ):
+                raise UserError(_(
+                    'Cannot remove %(product)s from the delivery because its Sale Order '
+                    'line is already delivered or invoiced.'
+                ) % {'product': line.product_id.display_name})
+            sale_lines_to_remove |= line
+
+        for line in removed_moves.mapped('purchase_line_id'):
+            remaining_moves = (line.move_ids - removed_moves).filtered(
+                lambda move: move.state != 'cancel'
+            )
+            if remaining_moves:
+                continue
+            import_lot_lines = self.env['import.lot.line'].search([
+                ('purchase_line_id', '=', line.id),
+            ])
+            active_allocations = import_lot_lines.mapped('allocation_ids').filtered(
+                lambda allocation: allocation.state in ('reserved', 'received', 'assigned', 'done')
+            )
+            if active_allocations:
+                raise UserError(_(
+                    'Cannot remove %(product)s from the receipt because its Import Lot '
+                    'quantity is already allocated to a Sale Order.'
+                ) % {'product': line.product_id.display_name})
+            active_invoice_lines = line.invoice_lines.filtered(
+                lambda invoice_line: invoice_line.move_id.state != 'cancel'
+            )
+            precision = line.product_uom.rounding or 0.01
+            if (
+                float_compare(line.qty_received, 0.0, precision_rounding=precision) > 0
+                or float_compare(line.qty_invoiced, 0.0, precision_rounding=precision) > 0
+                or active_invoice_lines
+            ):
+                raise UserError(_(
+                    'Cannot remove %(product)s from the receipt because its Purchase Order '
+                    'line is already received or invoiced.'
+                ) % {'product': line.product_id.display_name})
+            purchase_lines_to_remove |= line
+
+        return sale_lines_to_remove, purchase_lines_to_remove
+
+    def _remove_transfer_order_lines(self, sale_lines, purchase_lines):
+        sync_context = dict(
+            self.env.context,
+            skip_order_to_transfer_sync=True,
+        )
+        if sale_lines:
+            sale_lines.with_context(sync_context).unlink()
+        if purchase_lines:
+            import_lot_lines = self.env['import.lot.line'].search([
+                ('purchase_line_id', 'in', purchase_lines.ids),
+            ])
+            if import_lot_lines:
+                import_lot_lines.with_context(sync_context).unlink()
+            purchase_lines.exists().with_context(sync_context).unlink()
+
+    def _remove_order_lines_with_moves(self, removed_moves):
+        if not removed_moves:
+            return
+        self._remove_transfer_order_lines(
+            *self._get_order_lines_removed_with_moves(removed_moves)
+        )
+
+    def _sync_unlinked_moves_to_orders(self):
+        """Mirror products manually added on transfers to their source orders."""
+        SaleLine = self.env['sale.order.line'].with_context(
+            skip_order_to_transfer_sync=True
+        )
+        PurchaseLine = self.env['purchase.order.line'].with_context(
+            skip_order_to_transfer_sync=True
+        )
+        ImportLotLine = self.env['import.lot.line'].with_context(
+            skip_order_to_transfer_sync=True
+        )
+        moves_to_confirm = self.env['stock.move']
+
+        for picking in self.filtered(lambda record: record.state not in ('done', 'cancel')):
+            moves = picking.move_ids.filtered(
+                lambda move: move.state != 'cancel'
+                and move.product_id
+                and move.product_id.detailed_type in ('product', 'consu')
+            )
+
+            if (
+                picking.picking_type_code == 'outgoing'
+                and picking.sale_id
+                and picking.sale_id.state not in ('done', 'cancel')
+            ):
+                for move in moves.filtered(lambda record: not record.sale_line_id):
+                    quantity = self._get_move_qty_to_process(move)
+                    if float_compare(
+                        quantity,
+                        0.0,
+                        precision_rounding=move.product_uom.rounding or 0.01,
+                    ) <= 0:
+                        continue
+                    sale_line = SaleLine.create({
+                        'order_id': picking.sale_id.id,
+                        'product_id': move.product_id.id,
+                        'product_uom_qty': quantity,
+                        'product_uom': move.product_uom.id,
+                        'created_from_transfer': True,
+                    })
+                    move.sale_line_id = sale_line.id
+                    moves_to_confirm |= move
+
+            if (
+                picking.picking_type_code == 'incoming'
+                and picking.purchase_id
+                and picking.purchase_id.state not in ('done', 'cancel')
+            ):
+                for move in moves.filtered(lambda record: not record.purchase_line_id):
+                    quantity = self._get_move_qty_to_process(move)
+                    if float_compare(
+                        quantity,
+                        0.0,
+                        precision_rounding=move.product_uom.rounding or 0.01,
+                    ) <= 0:
+                        continue
+                    purchase_line = PurchaseLine.create({
+                        'order_id': picking.purchase_id.id,
+                        'product_id': move.product_id.id,
+                        'product_qty': quantity,
+                        'product_uom': move.product_uom.id,
+                        'created_from_transfer': True,
+                    })
+                    move.purchase_line_id = purchase_line.id
+                    moves_to_confirm |= move
+
+                    if picking.import_lot_id:
+                        ImportLotLine.create({
+                            'import_lot_id': picking.import_lot_id.id,
+                            'purchase_line_id': purchase_line.id,
+                            'product_id': move.product_id.id,
+                            'product_uom_id': move.product_uom.id,
+                            'expected_qty': quantity,
+                        })
+
+        draft_moves = moves_to_confirm.filtered(lambda move: move.state == 'draft')
+        if draft_moves:
+            draft_moves._action_confirm(merge=False)
+        assignable_moves = moves_to_confirm.filtered(
+            lambda move: move.state in ('confirmed', 'waiting', 'partially_available')
+        )
+        if assignable_moves:
+            assignable_moves._action_assign()
+
+    def write(self, vals):
+        removed_moves = self._get_removed_moves_from_commands(vals)
+        removed_sale_lines = self.env['sale.order.line']
+        removed_purchase_lines = self.env['purchase.order.line']
+        if removed_moves:
+            done_moves = removed_moves.filtered(lambda move: move.state == 'done')
+            if done_moves:
+                raise UserError(_(
+                    'Completed stock moves cannot be removed from a transfer. '
+                    'Create a return instead.'
+                ))
+            (
+                removed_sale_lines,
+                removed_purchase_lines,
+            ) = self._get_order_lines_removed_with_moves(removed_moves)
+            moves_to_cancel = removed_moves.filtered(
+                lambda move: move.state not in ('draft', 'cancel')
+            )
+            if moves_to_cancel:
+                moves_to_cancel._action_cancel()
+
+        result = super().write(vals)
+
+        if {'move_ids', 'move_ids_without_package'}.intersection(vals):
+            self._sync_unlinked_moves_to_orders()
+            self._remove_transfer_order_lines(
+                removed_sale_lines,
+                removed_purchase_lines,
+            )
+        return result
+
     def button_validate(self):
+        cancelled_moves = self.mapped('move_ids').filtered(
+            lambda move: move.state == 'cancel'
+        )
+        self._remove_order_lines_with_moves(cancelled_moves)
+        self._sync_unlinked_moves_to_orders()
         # For incoming receipts, put all received products into a package named as the Import Lot.
         self._assign_import_lot_package_on_receipt()
         # For outgoing deliveries, prepare quantities while keeping the package virtual.

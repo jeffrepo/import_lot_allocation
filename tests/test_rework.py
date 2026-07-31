@@ -100,9 +100,15 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(rework.import_lot_id.restricted_sale_order_id, sale)
         self.assertEqual(rework.import_lot_id.line_ids.product_id, self.product_b)
         self.assertEqual(rework.import_lot_id.line_ids.expected_qty, 7.0)
-        self.assertEqual(sale_line.import_lot_id, rework.import_lot_id)
+        self.assertFalse(sale_line.import_lot_id)
+        self.assertFalse(sale_line.planned_package_id)
+        self.assertEqual(sale_line, rework.sale_line_id)
         self.assertEqual(sale_line.import_lot_allocation_ids.allocated_qty, 7.0)
-        self.assertFalse(sale_line.planned_package_id.source_package_id)
+        plan = sale.planned_package_ids.filtered(
+            lambda record: record.import_lot_id == rework.import_lot_id
+        )
+        self.assertEqual(len(plan), 1)
+        self.assertFalse(plan.source_package_id)
 
     def test_process_consumes_a_and_produces_b_in_same_package(self):
         rework, _sale, sale_line = self._create_rework()
@@ -118,7 +124,10 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(rework.import_lot_id.state, 'received')
         self.assertEqual(rework.import_lot_id.source_package_id, rework.result_package_id)
         self.assertEqual(rework.import_lot_id.line_ids.received_qty, 7.0)
-        self.assertEqual(sale_line.planned_package_id.source_package_id, rework.result_package_id)
+        plan = sale_line.order_id.planned_package_ids.filtered(
+            lambda record: record.import_lot_id == rework.import_lot_id
+        )
+        self.assertEqual(plan.source_package_id, rework.result_package_id)
 
         source_a = self.env['stock.quant']._get_available_quantity(
             self.product_a,
@@ -225,21 +234,20 @@ class TestStockRework(common.TransactionCase):
         self.assertEqual(rework.state, 'confirmed')
         self.assertFalse(rework.result_package_id)
 
-    def test_partial_result_splits_sale_line_automatically(self):
+    def test_partial_result_keeps_one_sale_line(self):
         rework, _sale, _sale_line = self._create_rework(destination_qty=6.0, sale_qty=7.0)
 
         original_line = rework.sale_line_id
         rework.action_confirm()
 
-        self.assertEqual(original_line.product_uom_qty, 1.0)
-        self.assertNotEqual(rework.sale_line_id, original_line)
-        self.assertEqual(rework.sale_line_id.order_id, rework.sale_order_id)
-        self.assertEqual(rework.sale_line_id.product_uom_qty, 6.0)
-        self.assertEqual(rework.sale_line_id.import_lot_id, rework.import_lot_id)
+        self.assertEqual(len(rework.sale_order_id.order_line), 1)
+        self.assertEqual(rework.sale_line_id, original_line)
+        self.assertEqual(original_line.product_uom_qty, 7.0)
         self.assertFalse(original_line.import_lot_id)
-        self.assertEqual(sum(rework.sale_order_id.order_line.mapped('product_uom_qty')), 7.0)
+        self.assertFalse(original_line.planned_package_id)
+        self.assertEqual(original_line.import_lot_allocation_ids.allocated_qty, 6.0)
 
-    def test_partial_result_splits_stock_moves_on_confirmed_sale(self):
+    def test_partial_result_splits_only_stock_moves_on_confirmed_sale(self):
         rework, sale, original_line = self._create_rework(
             destination_qty=2.0,
             sale_qty=22.0,
@@ -248,18 +256,45 @@ class TestStockRework(common.TransactionCase):
 
         rework.action_confirm()
 
-        original_moves = original_line.move_ids.filtered(
-            lambda move: move.state not in ('done', 'cancel')
+        plan = sale.planned_package_ids.filtered(
+            lambda record: record.import_lot_id == rework.import_lot_id
         )
-        rework_moves = rework.sale_line_id.move_ids.filtered(
+        normal_moves = original_line.move_ids.filtered(
             lambda move: move.state not in ('done', 'cancel')
+            and not move.planned_package_id
         )
-        self.assertEqual(original_line.product_uom_qty, 20.0)
-        self.assertEqual(rework.sale_line_id.product_uom_qty, 2.0)
-        self.assertEqual(sum(original_moves.mapped('product_uom_qty')), 20.0)
+        rework_moves = original_line.move_ids.filtered(
+            lambda move: move.state not in ('done', 'cancel')
+            and move.planned_package_id == plan
+        )
+        self.assertEqual(len(sale.order_line), 1)
+        self.assertEqual(rework.sale_line_id, original_line)
+        self.assertEqual(original_line.product_uom_qty, 22.0)
+        self.assertEqual(sum(normal_moves.mapped('product_uom_qty')), 20.0)
         self.assertEqual(sum(rework_moves.mapped('product_uom_qty')), 2.0)
-        self.assertEqual(rework.sale_line_id.import_lot_id, rework.import_lot_id)
-        self.assertEqual(
-            rework_moves.planned_package_id,
-            rework.sale_line_id.planned_package_id,
+        self.assertEqual(rework_moves.sale_line_id, original_line)
+        self.assertEqual(rework_moves.planned_package_id, plan)
+
+    def test_partial_plan_is_applied_when_sale_is_confirmed_later(self):
+        rework, sale, sale_line = self._create_rework(
+            destination_qty=2.0,
+            sale_qty=22.0,
         )
+        rework.action_confirm()
+
+        sale.action_confirm()
+
+        plan = sale.planned_package_ids.filtered(
+            lambda record: record.import_lot_id == rework.import_lot_id
+        )
+        normal_moves = sale_line.move_ids.filtered(
+            lambda move: move.state not in ('done', 'cancel')
+            and not move.planned_package_id
+        )
+        rework_moves = sale_line.move_ids.filtered(
+            lambda move: move.state not in ('done', 'cancel')
+            and move.planned_package_id == plan
+        )
+        self.assertEqual(len(sale.order_line), 1)
+        self.assertEqual(sum(normal_moves.mapped('product_uom_qty')), 20.0)
+        self.assertEqual(sum(rework_moves.mapped('product_uom_qty')), 2.0)

@@ -16,7 +16,8 @@ This module adds an Import Lot flow for purchase/sale allocation, stock Rework, 
 - Every partial delivery/backorder creates a different physical package.
 - Rework Orders consume all or part of product A and add product B to the same physical package.
 - Rework output can be reserved for a specific Sale Order without purchasing product B.
-- A partial Rework automatically splits its quantity into a dedicated Sale Order line; the remaining quantity can use normal stock.
+- A partial Rework keeps one Sale Order line and splits only its outgoing stock moves between Rework and normal stock.
+- Products manually added or removed on open receipts/deliveries are synchronized to their Purchase/Sale Orders.
 - Import Lot line changes synchronize back to the Purchase Order lines when the PO is not done/cancelled.
 - `company_id` view validation fix for non-multi-company users.
 - Rework menu groups: Rework User / Rework Manager.
@@ -87,9 +88,9 @@ Example: package `0001` contains 10 units of Lemon A and 0.5 units must become 5
 5. Click **Confirm**.
    - The module creates an Import Lot with no Purchase Order.
    - The Import Lot is restricted to the selected Sale Order.
-   - If the Rework covers only part of the selected Sale Order line, that quantity is split automatically.
-   - The split Sale Order line receives the Import Lot allocation immediately, before Lemon B exists physically.
-   - The remaining quantity stays on the original line and can be supplied from normal stock or its existing Import Lot.
+   - The selected Sale Order line keeps its original quantity and is not duplicated.
+   - The Rework quantity receives a partial Import Lot allocation immediately, before Lemon B exists physically.
+   - At stock level, only that quantity receives the Rework package plan; the remainder can use normal stock.
 6. Click **Process Rework**.
    - A stock move consumes 0.5 Lemon A from package `0001` into the Production location.
    - A second stock move produces 5 Lemon B back into package `0001`.
@@ -102,6 +103,15 @@ Example: package `0001` contains 10 units of Lemon A and 0.5 units must become 5
 
 The source product UoM must allow the desired decimal precision when only part of one unit is consumed
 (for example, a rounding of `0.01`). The simple Rework flow supports products configured with **No Tracking**.
+
+## Transfer-to-order synchronization
+
+- Adding a new product to an open incoming receipt creates and links a new Purchase Order line.
+- If that receipt has an Import Lot, its expected line is created as well.
+- Adding a new product to an open outgoing delivery creates and links a new Sale Order line.
+- Removing the only remaining stock move for an undelivered/unreceived, uninvoiced order line removes that order line too.
+- Received, delivered, or invoiced lines are protected from reverse deletion.
+
 Products tracked by serial or stock lot require a separate lot/serial assignment flow.
 
 This lightweight flow records auditable stock consumption and production moves but does not calculate the

@@ -65,3 +65,23 @@ class PurchaseOrder(models.Model):
                 'res_id': self.import_lot_ids.id,
             })
         return action
+
+
+class PurchaseOrderLine(models.Model):
+    _inherit = 'purchase.order.line'
+
+    created_from_transfer = fields.Boolean(
+        string='Created from Transfer',
+        copy=False,
+        readonly=True,
+        help='Technical flag for lines created after adding a product directly to a receipt.',
+    )
+
+    def _create_or_update_picking(self):
+        if self.env.context.get('skip_order_to_transfer_sync'):
+            return True
+        return super()._create_or_update_picking()
+
+    def unlink(self):
+        self = self.with_context(skip_order_to_transfer_sync=True)
+        return super().unlink()

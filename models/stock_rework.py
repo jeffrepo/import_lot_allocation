@@ -116,8 +116,8 @@ class StockReworkOrder(models.Model):
         tracking=True,
         domain="[('order_id', '=', sale_order_id), ('product_id', '=', destination_product_id), ('display_type', '=', False)]",
         help=(
-            'If the Rework result covers only part of this line, the module automatically '
-            'splits that quantity into a separate Sale Order line assigned to the Rework.'
+            'The Rework quantity is allocated to this line without splitting it. '
+            'Only the corresponding delivery stock move receives the Rework package.'
         ),
     )
     import_lot_id = fields.Many2one(
@@ -294,62 +294,67 @@ class StockReworkOrder(models.Model):
                     'package': rework.source_package_id.name,
                     'location': rework.source_location_id.display_name,
                 })
-            if rework.sale_line_id.import_lot_id and rework.sale_line_id.import_lot_id != rework.import_lot_id:
+
+            if float_compare(
+                rework.sale_line_id.qty_delivered,
+                0.0,
+                precision_rounding=rework.sale_line_id.product_uom.rounding or 0.01,
+            ) > 0:
                 raise UserError(_(
-                    'Sale Order line %(line)s already uses Import Lot %(lot)s. Clear it before confirming this Rework.'
+                    'Sale Order line %(line)s already has delivered quantity. '
+                    'Create the Rework allocation before validating its delivery.'
+                ) % {'line': rework.sale_line_id.display_name})
+
+            delivery_moves_with_done_qty = rework.sale_line_id.move_ids.filtered(
+                lambda move: move.state not in ('done', 'cancel')
+                and move.picking_type_id.code == 'outgoing'
+                and float_compare(
+                    move.quantity_done,
+                    0.0,
+                    precision_rounding=move.product_uom.rounding or 0.01,
+                ) > 0
+            )
+            if delivery_moves_with_done_qty:
+                raise UserError(_(
+                    'Sale Order line %(line)s already has quantities entered on its delivery. '
+                    'Clear those done quantities before assigning a Rework package.'
+                ) % {'line': rework.sale_line_id.display_name})
+
+            active_allocations = rework.sale_line_id.import_lot_allocation_ids.filtered(
+                lambda allocation: allocation.state in ('reserved', 'received', 'assigned', 'done')
+                and allocation.import_lot_id != rework.import_lot_id
+            )
+            allocated_sale_qty = sum(
+                allocation.product_uom_id._compute_quantity(
+                    allocation.allocated_qty,
+                    rework.sale_line_id.product_uom,
+                    round=False,
+                )
+                for allocation in active_allocations
+            )
+            rework_sale_qty = rework.destination_uom_id._compute_quantity(
+                rework.destination_qty,
+                rework.sale_line_id.product_uom,
+                round=False,
+            )
+            available_sale_qty = max(
+                rework.sale_line_id.product_uom_qty - allocated_sale_qty,
+                0.0,
+            )
+            if float_compare(
+                rework_sale_qty,
+                available_sale_qty,
+                precision_rounding=rework.sale_line_id.product_uom.rounding or 0.01,
+            ) > 0:
+                raise UserError(_(
+                    'The Rework result requires %(requested)s %(uom)s on Sale Order line %(line)s, '
+                    'but only %(available)s %(uom)s remain without another Import Lot allocation.'
                 ) % {
+                    'requested': rework_sale_qty,
+                    'available': available_sale_qty,
+                    'uom': rework.sale_line_id.product_uom.name,
                     'line': rework.sale_line_id.display_name,
-                    'lot': rework.sale_line_id.import_lot_id.name,
                 })
-
-    def _split_sale_line_for_partial_result(self):
-        """Keep one physical source package per Sale Order line.
-
-        A partial Rework cannot point the complete sale line to its package because
-        the remaining quantity may come from unrestricted stock or another Import Lot.
-        Split the result quantity into its own line before assigning the Rework lot.
-        """
-        self.ensure_one()
-        sale_line = self.sale_line_id
-        rework_sale_qty = self.destination_uom_id._compute_quantity(
-            self.destination_qty,
-            sale_line.product_uom,
-            round=False,
-        )
-        precision = sale_line.product_uom.rounding or 0.01
-        if float_compare(
-            rework_sale_qty,
-            sale_line.product_uom_qty,
-            precision_rounding=precision,
-        ) >= 0:
-            return sale_line
-
-        active_invoice_lines = sale_line.invoice_lines.filtered(
-            lambda invoice_line: invoice_line.move_id.state != 'cancel'
-        )
-        if (
-            float_compare(sale_line.qty_delivered, 0.0, precision_rounding=precision) > 0
-            or float_compare(sale_line.qty_invoiced, 0.0, precision_rounding=precision) > 0
-            or active_invoice_lines
-        ):
-            raise UserError(_(
-                'Sale Order line %(line)s is already delivered or invoiced and cannot be split automatically. '
-                'Add a separate Sale Order line for the Rework quantity.'
-            ) % {'line': sale_line.display_name})
-
-        remaining_qty = sale_line.product_uom_qty - rework_sale_qty
-        sale_line.write({'product_uom_qty': remaining_qty})
-        rework_line = sale_line.copy(default={
-            # sale.order.line.order_id is required and copy=False in Odoo.
-            'order_id': sale_line.order_id.id,
-            'sequence': sale_line.sequence + 1,
-            'product_uom_qty': rework_sale_qty,
-            'import_lot_id': False,
-            'planned_package_id': False,
-            'package_id': False,
-        })
-        self.sale_line_id = rework_line.id
-        return rework_line
 
     def _create_rework_import_lot(self):
         self.ensure_one()
@@ -370,15 +375,145 @@ class StockReworkOrder(models.Model):
         self.import_lot_id = import_lot.id
         return import_lot
 
+    def _create_rework_allocation(self, import_lot):
+        self.ensure_one()
+        allocation = import_lot.allocation_ids.filtered(
+            lambda record: record.sale_line_id == self.sale_line_id
+        )
+        if allocation:
+            return allocation
+        return self.env['import.lot.allocation'].create({
+            'import_lot_id': import_lot.id,
+            'import_lot_line_id': import_lot.line_ids.id,
+            'sale_line_id': self.sale_line_id.id,
+            'allocated_qty': self.destination_qty,
+            'state': 'reserved',
+            'auto_from_sale_line': False,
+            'note': _('Partial Rework allocation from %s.') % self.name,
+        })
+
+    def _sync_partial_plan_to_sale_moves(self):
+        """Assign only the Rework quantity to its package plan.
+
+        The Sale Order keeps one commercial line. If necessary, Odoo's stock move is
+        split so the remaining quantity can still be supplied from unrestricted stock.
+        """
+        Move = self.env['stock.move']
+        for rework in self:
+            if not rework.import_lot_id or rework.state not in ('confirmed', 'done'):
+                continue
+
+            allocation = rework.import_lot_id.allocation_ids.filtered(
+                lambda record: record.sale_line_id == rework.sale_line_id
+                and record.state in ('reserved', 'received', 'assigned', 'done')
+            )
+            if not allocation:
+                continue
+
+            # Records confirmed with an older module version already use the
+            # full-line plan and must keep that behavior unchanged.
+            if rework.sale_line_id.import_lot_id == rework.import_lot_id:
+                continue
+
+            plan = self.env['stock.package.plan']._get_or_create_for_import_lot(
+                rework.sale_order_id,
+                rework.import_lot_id,
+            )
+            target_product_qty = rework.destination_uom_id._compute_quantity(
+                rework.destination_qty,
+                rework.destination_product_id.uom_id,
+                round=False,
+            )
+            planned_moves = rework.sale_line_id.move_ids.filtered(
+                lambda move: move.state != 'cancel'
+                and move.picking_type_id.code == 'outgoing'
+                and move.planned_package_id == plan
+            )
+            planned_product_qty = sum(planned_moves.mapped('product_qty'))
+            remaining_product_qty = target_product_qty - planned_product_qty
+            precision = rework.destination_product_id.uom_id.rounding or 0.01
+            if float_compare(
+                remaining_product_qty,
+                0.0,
+                precision_rounding=precision,
+            ) <= 0:
+                continue
+
+            candidate_moves = rework.sale_line_id.move_ids.filtered(
+                lambda move: move.state not in ('done', 'cancel')
+                and move.picking_type_id.code == 'outgoing'
+                and not move.planned_package_id
+            ).sorted('id')
+            normal_moves_to_reassign = Move
+            plan_moves_to_reassign = Move
+
+            for move in candidate_moves:
+                if float_compare(
+                    remaining_product_qty,
+                    0.0,
+                    precision_rounding=precision,
+                ) <= 0:
+                    break
+
+                move_product_qty = move.product_qty
+                if float_compare(
+                    move_product_qty,
+                    0.0,
+                    precision_rounding=precision,
+                ) <= 0:
+                    continue
+
+                if move.move_line_ids:
+                    move._do_unreserve()
+
+                if float_compare(
+                    move_product_qty,
+                    remaining_product_qty,
+                    precision_rounding=precision,
+                ) <= 0:
+                    move.planned_package_id = plan.id
+                    plan_moves_to_reassign |= move
+                    remaining_product_qty -= move_product_qty
+                    continue
+
+                split_values = move._split(remaining_product_qty)
+                for values in split_values:
+                    values['planned_package_id'] = plan.id
+                split_moves = Move.create(split_values)
+                split_moves._action_confirm(merge=False)
+                plan_moves_to_reassign |= split_moves
+                normal_moves_to_reassign |= move
+                remaining_product_qty = 0.0
+
+            if float_compare(
+                remaining_product_qty,
+                0.0,
+                precision_rounding=precision,
+            ) > 0 and rework.sale_order_id.state in ('sale', 'done'):
+                raise UserError(_(
+                    'The open delivery moves for Sale Order line %(line)s do not have '
+                    '%(qty)s %(uom)s available for Rework %(rework)s.'
+                ) % {
+                    'line': rework.sale_line_id.display_name,
+                    'qty': remaining_product_qty,
+                    'uom': rework.destination_product_id.uom_id.name,
+                    'rework': rework.name,
+                })
+
+            if normal_moves_to_reassign:
+                normal_moves_to_reassign._action_assign()
+            if plan.source_package_id and plan_moves_to_reassign:
+                plan_moves_to_reassign._action_assign()
+
     def action_confirm(self):
         for rework in self:
             if rework.state != 'draft':
                 continue
-            rework._split_sale_line_for_partial_result()
             rework._check_can_confirm()
             import_lot = rework.import_lot_id or rework._create_rework_import_lot()
-            rework.sale_line_id.import_lot_id = import_lot.id
+            rework._create_rework_allocation(import_lot)
             rework.state = 'confirmed'
+            rework._sync_partial_plan_to_sale_moves()
         return True
 
     def _check_source_availability(self):
@@ -525,10 +660,24 @@ class StockReworkOrder(models.Model):
                     'Create a reverse Rework if you need to undo it.'
                 ))
             if rework.import_lot_id:
+                plans = self.env['stock.package.plan'].search([
+                    ('import_lot_id', '=', rework.import_lot_id.id),
+                ])
+                open_plan_moves = plans.mapped('move_ids').filtered(
+                    lambda move: move.state not in ('done', 'cancel')
+                )
+                if open_plan_moves:
+                    open_plan_moves._do_unreserve()
+                    open_plan_moves.write({'planned_package_id': False})
+                    open_plan_moves._action_assign()
                 sale_lines = self.env['sale.order.line'].search([
                     ('import_lot_id', '=', rework.import_lot_id.id),
                 ])
                 sale_lines.write({'import_lot_id': False})
+                rework.import_lot_id.allocation_ids.filtered(
+                    lambda allocation: allocation.state not in ('done', 'cancelled')
+                ).write({'state': 'cancelled'})
+                plans.exists()._unlink_if_unused_automatic()
                 rework.import_lot_id.state = 'cancelled'
             rework.state = 'cancelled'
         return True
