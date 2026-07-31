@@ -14,18 +14,35 @@ class PurchaseOrder(models.Model):
         string='Import Lot Count',
         compute='_compute_import_lot_count',
     )
+    expected_package_ids = fields.One2many(
+        'stock.expected.package',
+        'purchase_order_id',
+        string='Future Packages',
+    )
+    expected_package_count = fields.Integer(
+        string='Future Packages',
+        compute='_compute_expected_package_count',
+    )
 
     def _compute_import_lot_count(self):
         for order in self:
             order.import_lot_count = len(order.import_lot_ids)
 
+    def _compute_expected_package_count(self):
+        for order in self:
+            order.expected_package_count = len(order.expected_package_ids)
+
     def action_create_import_lot(self):
         self.ensure_one()
         ImportLot = self.env['import.lot']
+        expected_package = self.env[
+            'stock.expected.package'
+        ]._get_or_create_for_purchase(self)
         lot_name = ImportLot._get_name_from_purchase_order(self)
         lot = ImportLot.create({
             'name': lot_name,
             'purchase_order_id': self.id,
+            'expected_package_id': expected_package.id,
             'partner_id': self.partner_id.id,
             'expected_date': self.date_planned,
             'company_id': self.company_id.id,
@@ -43,6 +60,19 @@ class PurchaseOrder(models.Model):
             'res_model': 'import.lot',
             'view_mode': 'form',
             'res_id': lot.id,
+        }
+
+    def action_view_expected_packages(self):
+        self.ensure_one()
+        expected_package = self.env[
+            'stock.expected.package'
+        ]._get_or_create_for_purchase(self)
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Future Package'),
+            'res_model': 'stock.expected.package',
+            'view_mode': 'form',
+            'res_id': expected_package.id,
         }
 
     def action_view_import_lots(self):
@@ -65,3 +95,23 @@ class PurchaseOrder(models.Model):
                 'res_id': self.import_lot_ids.id,
             })
         return action
+
+
+class PurchaseOrderLine(models.Model):
+    _inherit = 'purchase.order.line'
+
+    created_from_transfer = fields.Boolean(
+        string='Created from Transfer',
+        copy=False,
+        readonly=True,
+        help='Technical flag for lines created after adding a product directly to a receipt.',
+    )
+
+    def _create_or_update_picking(self):
+        if self.env.context.get('skip_order_to_transfer_sync'):
+            return True
+        return super()._create_or_update_picking()
+
+    def unlink(self):
+        self = self.with_context(skip_order_to_transfer_sync=True)
+        return super().unlink()

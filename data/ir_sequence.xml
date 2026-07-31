@@ -7,4 +7,20 @@
         <field name="padding">5</field>
         <field name="company_id" eval="False"/>
     </record>
+
+    <record id="seq_stock_package_plan" model="ir.sequence">
+        <field name="name">Planned Delivery Package</field>
+        <field name="code">stock.package.plan</field>
+        <field name="prefix">PPLAN/%(year)s/</field>
+        <field name="padding">5</field>
+        <field name="company_id" eval="False"/>
+    </record>
+
+    <record id="seq_stock_rework_order" model="ir.sequence">
+        <field name="name">Stock Rework Order</field>
+        <field name="code">stock.rework.order</field>
+        <field name="prefix">RWK/%(year)s/</field>
+        <field name="padding">5</field>
+        <field name="company_id" eval="False"/>
+    </record>
 </odoo>

@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_stock_rework_order_tree" model="ir.ui.view">
+        <field name="name">stock.rework.order.tree</field>
+        <field name="model">stock.rework.order</field>
+        <field name="arch" type="xml">
+            <tree string="Rework Orders" decoration-success="state == 'done'" decoration-muted="state == 'cancelled'">
+                <field name="name"/>
+                <field name="sale_order_id"/>
+                <field name="line_count"/>
+                <field name="result_package_count"/>
+                <field name="state"/>
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_stock_rework_order_form" model="ir.ui.view">
+        <field name="name">stock.rework.order.form</field>
+        <field name="model">stock.rework.order</field>
+        <field name="arch" type="xml">
+            <form string="Rework Order">
+                <header>
+                    <button name="action_confirm" type="object" string="Confirm" states="draft" class="btn-primary"/>
+                    <button name="action_process" type="object" string="Process Rework" states="draft,confirmed" class="btn-primary"/>
+                    <button name="action_cancel" type="object" string="Cancel" states="draft,confirmed" class="btn-secondary"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,confirmed,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_import_lots" type="object" class="oe_stat_button" icon="fa-tags"
+                                attrs="{'invisible': [('output_import_lot_count', '=', 0)]}">
+                            <field name="output_import_lot_count" widget="statinfo" string="Result Lots"/>
+                        </button>
+                        <button name="action_view_result_packages" type="object" class="oe_stat_button" icon="fa-cubes"
+                                attrs="{'invisible': [('result_package_count', '=', 0)]}">
+                            <field name="result_package_count" widget="statinfo" string="Packages"/>
+                        </button>
+                        <button name="action_view_moves" type="object" class="oe_stat_button" icon="fa-exchange"
+                                attrs="{'invisible': [('stock_move_count', '=', 0)]}">
+                            <field name="stock_move_count" widget="statinfo" string="Stock Moves"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="sale_order_id" attrs="{'readonly': [('state', '!=', 'draft')]}"/>
+                        </group>
+                        <group>
+                            <field name="company_id" invisible="1"/>
+                        </group>
+                    </group>
+
+                    <field name="legacy_data_pending" invisible="1"/>
+                    <group string="Legacy Conversion Pending Migration"
+                           attrs="{'invisible': [('legacy_data_pending', '=', False)]}">
+                        <group>
+                            <field name="source_package_id" readonly="1"/>
+                            <field name="source_product_id" readonly="1"/>
+                            <field name="source_qty" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="destination_product_id" readonly="1"/>
+                            <field name="destination_qty" readonly="1"/>
+                            <field name="sale_line_id" readonly="1"/>
+                        </group>
+                    </group>
+
+                    <notebook>
+                        <page string="Conversions">
+                            <field name="line_ids" attrs="{'readonly': [('state', '!=', 'draft')]}">
+                                <tree editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="company_id" invisible="1"/>
+                                    <field name="sale_order_id" invisible="1"/>
+                                    <field name="source_product_domain_ids" invisible="1"/>
+                                    <field name="source_import_lot_id"/>
+                                    <field name="source_expected_package_id" readonly="1"/>
+                                    <field name="source_package_id" force_save="1" optional="show"
+                                           attrs="{'readonly': [('source_import_lot_id', '!=', False)]}"/>
+                                    <field name="source_product_id"/>
+                                    <field name="source_qty"/>
+                                    <field name="source_uom_id" readonly="1"/>
+                                    <field name="source_available_qty" readonly="1" optional="show"/>
+                                    <field name="destination_product_id"/>
+                                    <field name="destination_qty"/>
+                                    <field name="destination_uom_id" readonly="1"/>
+                                    <field name="sale_line_id"/>
+                                    <field name="result_package_id" readonly="1" optional="hide"/>
+                                    <field name="note" optional="hide"/>
+                                </tree>
+                                <form string="Rework Conversion">
+                                    <group>
+                                        <group string="Consume from Purchase Package">
+                                            <field name="company_id" invisible="1"/>
+                                            <field name="sale_order_id" invisible="1"/>
+                                            <field name="source_product_domain_ids" invisible="1"/>
+                                            <field name="source_import_lot_id"/>
+                                            <field name="source_expected_package_id" readonly="1"/>
+                                            <field name="source_package_id" force_save="1"
+                                                   attrs="{'readonly': [('source_import_lot_id', '!=', False)]}"/>
+                                            <field name="source_product_id"/>
+                                            <field name="source_location_id" readonly="1" force_save="1"/>
+                                            <field name="source_available_qty" readonly="1"/>
+                                            <field name="source_qty"/>
+                                            <field name="source_uom_id" readonly="1"/>
+                                        </group>
+                                        <group string="Produce in the Same Package">
+                                            <field name="destination_product_id"/>
+                                            <field name="destination_location_id" readonly="1" force_save="1"/>
+                                            <field name="destination_qty"/>
+                                            <field name="destination_uom_id" readonly="1"/>
+                                            <field name="sale_line_id"/>
+                                            <field name="result_package_id" readonly="1"/>
+                                        </group>
+                                    </group>
+                                    <group>
+                                        <field name="note" placeholder="Conversion instructions..."/>
+                                        <field name="output_import_lot_id" readonly="1"/>
+                                    </group>
+                                </form>
+                            </field>
+                        </page>
+                        <page string="Result Import Lots" attrs="{'invisible': [('output_import_lot_count', '=', 0)]}">
+                            <field name="output_import_lot_ids" readonly="1">
+                                <tree create="0" delete="0">
+                                    <field name="name"/>
+                                    <field name="source_package_id"/>
+                                    <field name="expected_qty"/>
+                                    <field name="received_qty"/>
+                                    <field name="state"/>
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                    <group>
+                        <field name="note" placeholder="General Rework instructions or notes..."
+                               attrs="{'readonly': [('state', '=', 'done')]}"/>
+                    </group>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_stock_rework_order_search" model="ir.ui.view">
+        <field name="name">stock.rework.order.search</field>
+        <field name="model">stock.rework.order</field>
+        <field name="arch" type="xml">
+            <search string="Rework Orders">
+                <field name="name"/>
+                <field name="sale_order_id"/>
+                <field name="line_ids"/>
+                <filter name="open_rework" string="Open" domain="[('state', 'in', ('draft', 'confirmed'))]"/>
+                <group expand="0" string="Group By">
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="group_sale" string="Sale Order" context="{'group_by': 'sale_order_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_stock_rework_order" model="ir.actions.act_window">
+        <field name="name">Rework Orders</field>
+        <field name="res_model">stock.rework.order</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_stock_rework_order_search"/>
+        <field name="context">{'search_default_open_rework': 1}</field>
+    </record>
+
+    <menuitem id="menu_stock_rework_order" name="Rework Orders" parent="menu_import_lot_root"
+              action="action_stock_rework_order" sequence="5"
+              groups="import_lot_allocation.group_rework_user"/>
+</odoo>
